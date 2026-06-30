@@ -13,7 +13,7 @@ function formatCount(n: number): string {
 
 export function StatusBar() {
   const entries = useExplorerStore((s) => s.entries);
-  const selectedEntry = useExplorerStore((s) => s.selectedEntry);
+  const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const loading = useExplorerStore((s) => s.loading);
   const searchQuery = useExplorerStore((s) => s.searchQuery);
   const searchResults = useExplorerStore((s) => s.searchResults);
@@ -47,7 +47,11 @@ export function StatusBar() {
     const itemCount = entries.length;
     itemText = loading ? "Loading..." : `${itemCount} item${itemCount !== 1 ? "s" : ""}`;
   }
-  const selectionText = selectedEntry ? `"${selectedEntry.name}" selected` : null;
+  const selectionText = selectedEntries.length === 1
+    ? `"${selectedEntries[0].name}" selected`
+    : selectedEntries.length > 1
+      ? `${selectedEntries.length} items selected`
+      : null;
   const clipboardText = clipboardCount > 0
     ? `${clipboardCount} item${clipboardCount !== 1 ? "s" : ""} ${clipboardOperation === "cut" ? "cut" : "copied"}`
     : null;

@@ -21,13 +21,13 @@ interface ExplorerState {
   entries: DirectoryEntry[];
   loading: boolean;
   error: string | null;
-  selectedEntry: DirectoryEntry | null;
+  selectedEntries: DirectoryEntry[];
   historyStack: string[];
   forwardStack: string[];
 
   navigateTo: (path: string) => void;
   openEntry: (entry: DirectoryEntry) => void;
-  selectEntry: (entry: DirectoryEntry | null) => void;
+  selectEntry: (entry: DirectoryEntry | null, ctrl?: boolean, shift?: boolean) => void;
   goBack: () => void;
   goForward: () => void;
   goUp: () => void;
@@ -38,7 +38,7 @@ interface ExplorerState {
   clearOperationError: () => void;
   createFolder: (name: string) => Promise<boolean>;
   renameEntry: (entry: DirectoryEntry, newName: string) => Promise<boolean>;
-  deleteEntry: (entry: DirectoryEntry) => Promise<boolean>;
+  deleteEntry: () => Promise<boolean>;
 
   contextMenu: { x: number; y: number; entry: DirectoryEntry | null } | null;
   showContextMenu: (x: number, y: number, entry: DirectoryEntry | null) => void;
@@ -52,8 +52,8 @@ interface ExplorerState {
   startRename: (entry: DirectoryEntry) => void;
   cancelRename: () => void;
 
-  deleteTarget: DirectoryEntry | null;
-  confirmDelete: (entry: DirectoryEntry) => void;
+  deleteTargets: DirectoryEntry[];
+  confirmDelete: (entries: DirectoryEntry[]) => void;
   cancelDelete: () => void;
 
   searchQuery: string;
@@ -102,7 +102,7 @@ let searchStartTime = 0;
 
 function loadDirectory(path: string, set: (partial: Partial<ExplorerState>) => void) {
   searchGeneration++;
-  set({ currentPath: path, loading: true, error: null, entries: [], selectedEntry: null, searchQuery: "", searchResults: null, searchLoading: false, searchError: null, searchProgress: null, searchDurationMs: null });
+  set({ currentPath: path, loading: true, error: null, entries: [], selectedEntries: [], searchQuery: "", searchResults: null, searchLoading: false, searchError: null, searchProgress: null, searchDurationMs: null });
   ExplorerService.listDirectory(path)
     .then((entries) => set({ entries, loading: false }))
     .catch((err) =>
@@ -139,7 +139,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   entries: [],
   loading: false,
   error: null,
-  selectedEntry: null,
+  selectedEntries: [],
   historyStack: [],
   forwardStack: [],
 
@@ -162,8 +162,34 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     loadDirectory(entry.full_path, set);
   },
 
-  selectEntry: (entry: DirectoryEntry | null) => {
-    set({ selectedEntry: entry });
+  selectEntry: (entry: DirectoryEntry | null, ctrl?: boolean, shift?: boolean) => {
+    if (!entry) { set({ selectedEntries: [] }); return; }
+    const { selectedEntries, entries, searchResults } = get();
+    const list = searchResults ?? entries;
+
+    if (shift && selectedEntries.length > 0) {
+      const anchor = selectedEntries[0];
+      const anchorIdx = list.findIndex((e) => e.full_path === anchor.full_path);
+      const targetIdx = list.findIndex((e) => e.full_path === entry.full_path);
+      if (anchorIdx >= 0 && targetIdx >= 0) {
+        const start = Math.min(anchorIdx, targetIdx);
+        const end = Math.max(anchorIdx, targetIdx);
+        set({ selectedEntries: list.slice(start, end + 1) });
+        return;
+      }
+    }
+
+    if (ctrl) {
+      const exists = selectedEntries.some((e) => e.full_path === entry.full_path);
+      if (exists) {
+        set({ selectedEntries: selectedEntries.filter((e) => e.full_path !== entry.full_path) });
+      } else {
+        set({ selectedEntries: [...selectedEntries, entry] });
+      }
+      return;
+    }
+
+    set({ selectedEntries: [entry] });
   },
 
   goBack: () => {
@@ -245,11 +271,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     }
   },
 
-  deleteEntry: async (entry: DirectoryEntry): Promise<boolean> => {
+  deleteEntry: async (): Promise<boolean> => {
+    const targets = get().deleteTargets;
+    if (targets.length === 0) return false;
     set({ operationLoading: true, operationError: null });
     try {
-      await ExplorerService.delete(entry.full_path);
-      set({ operationLoading: false, deleteTarget: null, selectedEntry: null });
+      for (const entry of targets) {
+        await ExplorerService.delete(entry.full_path);
+      }
+      set({ operationLoading: false, deleteTargets: [], selectedEntries: [] });
       const { currentPath } = get();
       if (currentPath) loadDirectory(currentPath, set);
       window.dispatchEvent(new Event("drives:invalidate"));
@@ -275,9 +305,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   startRename: (entry) => set({ renameTarget: entry, operationError: null, contextMenu: null }),
   cancelRename: () => set({ renameTarget: null, operationError: null }),
 
-  deleteTarget: null,
-  confirmDelete: (entry) => set({ deleteTarget: entry, operationError: null, contextMenu: null }),
-  cancelDelete: () => set({ deleteTarget: null, operationError: null }),
+  deleteTargets: [],
+  confirmDelete: (entries) => set({ deleteTargets: entries, operationError: null, contextMenu: null }),
+  cancelDelete: () => set({ deleteTargets: [], operationError: null }),
 
   searchQuery: "",
   searchResults: null,
@@ -305,7 +335,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       .then((results) => {
         if (gen !== searchGeneration) return;
         const duration = performance.now() - searchStartTime;
-        set({ searchResults: results, searchLoading: false, selectedEntry: null, searchDurationMs: duration, searchProgress: null });
+        set({ searchResults: results, searchLoading: false, selectedEntries: [], searchDurationMs: duration, searchProgress: null });
       })
       .catch((err) => {
         if (gen !== searchGeneration) return;

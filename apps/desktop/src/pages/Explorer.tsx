@@ -54,23 +54,33 @@ export default function Explorer() {
       const state = useExplorerStore.getState();
 
       if (e.key === "Delete") {
-        if (state.selectedEntry && !state.deleteTarget) {
+        if (state.selectedEntries.length > 0 && state.deleteTargets.length === 0) {
           e.preventDefault();
-          state.confirmDelete(state.selectedEntry);
+          state.confirmDelete(state.selectedEntries);
+        }
+        return;
+      }
+
+      if (e.ctrlKey && e.key === "a") {
+        e.preventDefault();
+        const list = state.searchResults ?? state.entries;
+        state.selectEntry(null);
+        if (list.length > 0) {
+          useExplorerStore.setState({ selectedEntries: [...list] });
         }
         return;
       }
 
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.key === "c") {
-        if (state.selectedEntry) {
+        if (state.selectedEntries.length > 0) {
           e.preventDefault();
-          state.copyEntries([state.selectedEntry]);
+          state.copyEntries(state.selectedEntries);
         }
       } else if (e.key === "x") {
-        if (state.selectedEntry) {
+        if (state.selectedEntries.length > 0) {
           e.preventDefault();
-          state.cutEntries([state.selectedEntry]);
+          state.cutEntries(state.selectedEntries);
         }
       } else if (e.key === "v") {
         if (state.currentPath) {
@@ -446,21 +456,22 @@ function NoResultsState({ query }: { query: string }) {
 }
 
 function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
-  const selectedEntry = useExplorerStore((s) => s.selectedEntry);
+  const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const selectedPaths = new Set(selectedEntries.map((e) => e.full_path));
 
   return (
     <div className="text-[12px]">
       {entries.map((entry) => {
-        const isSelected = selectedEntry?.full_path === entry.full_path;
+        const isSelected = selectedPaths.has(entry.full_path);
         return (
           <div
             key={entry.full_path}
-            onClick={(e) => { e.stopPropagation(); selectEntry(entry); }}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); }}
             onDoubleClick={() => openEntry(entry)}
-            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
             className={`flex items-center h-[26px] px-3 transition-colors cursor-default select-none border-b border-transparent ${
               isSelected
                 ? "bg-accent/10 border-accent/20"
@@ -490,21 +501,22 @@ function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
 }
 
 function GridView({ entries }: { entries: DirectoryEntry[] }) {
-  const selectedEntry = useExplorerStore((s) => s.selectedEntry);
+  const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const selectedPaths = new Set(selectedEntries.map((e) => e.full_path));
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-1 p-2">
       {entries.map((entry) => {
-        const isSelected = selectedEntry?.full_path === entry.full_path;
+        const isSelected = selectedPaths.has(entry.full_path);
         return (
           <div
             key={entry.full_path}
-            onClick={(e) => { e.stopPropagation(); selectEntry(entry); }}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); }}
             onDoubleClick={() => openEntry(entry)}
-            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
             className={`flex flex-col items-center gap-1 p-2 rounded-md transition-colors cursor-default select-none ${
               entry.hidden ? "opacity-50" : ""
             } ${
@@ -694,21 +706,29 @@ function RenameDialog() {
 }
 
 function DeleteConfirmDialog() {
-  const target = useExplorerStore((s) => s.deleteTarget);
+  const targets = useExplorerStore((s) => s.deleteTargets);
   const cancel = useExplorerStore((s) => s.cancelDelete);
   const doDelete = useExplorerStore((s) => s.deleteEntry);
   const operationLoading = useExplorerStore((s) => s.operationLoading);
   const operationError = useExplorerStore((s) => s.operationError);
 
-  if (!target) return null;
+  if (targets.length === 0) return null;
+
+  const isSingle = targets.length === 1;
+  const hasFolder = targets.some((t) => t.is_directory);
 
   return (
     <DialogOverlay onClose={cancel}>
       <div className="flex flex-col gap-3">
         <h3 className="text-[13px] font-semibold text-text-primary">Delete</h3>
         <p className="text-[12px] text-text-secondary leading-relaxed">
-          Are you sure you want to permanently delete <strong className="text-text-primary">"{target.name}"</strong>?
-          {target.is_directory && " This will delete all contents inside the folder."}
+          {isSingle ? (
+            <>Are you sure you want to permanently delete <strong className="text-text-primary">"{targets[0].name}"</strong>?
+            {targets[0].is_directory && " This will delete all contents inside the folder."}</>
+          ) : (
+            <>Are you sure you want to permanently delete <strong className="text-text-primary">{targets.length} items</strong>?
+            {hasFolder && " This includes folders with all their contents."}</>
+          )}
           {" "}This action cannot be undone.
         </p>
         {operationError && (
@@ -716,7 +736,7 @@ function DeleteConfirmDialog() {
         )}
         <div className="flex justify-end gap-2">
           <DialogButton onClick={cancel} disabled={operationLoading}>Cancel</DialogButton>
-          <DialogButton danger onClick={() => doDelete(target)} disabled={operationLoading}>
+          <DialogButton danger onClick={() => doDelete()} disabled={operationLoading}>
             {operationLoading ? "Deleting..." : "Delete"}
           </DialogButton>
         </div>
@@ -1168,6 +1188,7 @@ function ContextMenu() {
   const pasteEntries = useExplorerStore((s) => s.pasteEntries);
   const clipboardCount = useExplorerStore((s) => s.clipboardCount);
   const currentPath = useExplorerStore((s) => s.currentPath);
+  const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1201,11 +1222,11 @@ function ContextMenu() {
           <ContextMenuDivider />
           <ContextMenuItem
             label="Copy"
-            onAction={() => { copyEntries([entry]); hide(); }}
+            onAction={() => { copyEntries(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
           />
           <ContextMenuItem
             label="Cut"
-            onAction={() => { cutEntries([entry]); hide(); }}
+            onAction={() => { cutEntries(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
           />
           <ContextMenuItem
             label="Paste"
@@ -1221,7 +1242,7 @@ function ContextMenu() {
           <ContextMenuItem
             label="Delete"
             danger
-            onAction={() => { confirmDelete(entry); hide(); }}
+            onAction={() => { confirmDelete(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
           />
         </>
       ) : (
