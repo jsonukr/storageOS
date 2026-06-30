@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { DirectoryEntry, SearchProgressPayload } from "@/lib/tauri";
-import { onBridgeEvent } from "@/lib/tauri";
+import { onBridgeEvent, startTransfer } from "@/lib/tauri";
 import { ExplorerService } from "@/services/ExplorerService";
 import { ClipboardService } from "@/services/clipboard";
 import { TransferService } from "@/services/transfer";
@@ -84,6 +84,17 @@ interface ExplorerState {
 
   notification: string | null;
   clearNotification: () => void;
+
+  spaceError: {
+    transferId: string;
+    error: string;
+    destination: string;
+    source: string;
+    transferType: string;
+    name: string;
+  } | null;
+  dismissSpaceError: () => void;
+  retrySpaceError: () => void;
 }
 
 let searchGeneration = 0;
@@ -241,6 +252,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       set({ operationLoading: false, deleteTarget: null, selectedEntry: null });
       const { currentPath } = get();
       if (currentPath) loadDirectory(currentPath, set);
+      window.dispatchEvent(new Event("drives:invalidate"));
       return true;
     } catch (err) {
       set({
@@ -341,8 +353,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({ notification: `Cut: ${names}` });
   },
 
-  pasteEntries: async (overwrite?: boolean, newName?: string) => {
-    const { currentPath, pasteConflict } = get();
+  pasteEntries: (overwrite?: boolean, newName?: string) => {
+    const { currentPath, pasteConflict, entries } = get();
     if (!currentPath) return;
 
     let items: Array<{ path: string }>;
@@ -354,57 +366,47 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       set({ pasteConflict: null });
     } else {
       if (!ClipboardService.hasItems()) return;
-      items = ClipboardService.getItems();
+      items = [...ClipboardService.getItems()];
       isCut = ClipboardService.isCutOperation();
     }
 
-    set({ operationLoading: true, operationError: null });
-    let successCount = 0;
-    let firstItemOverwrite = overwrite;
-    let firstItemNewName = newName;
+    const existingNames = new Set(entries.map((e) => e.name));
+    const firstItemOverwrite = overwrite;
+    const firstItemNewName = newName;
+    let queued = 0;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const ow = i === 0 ? firstItemOverwrite : undefined;
       const nn = i === 0 ? firstItemNewName : undefined;
-      try {
-        if (isCut) {
-          await ExplorerService.moveTo(item.path, currentPath, ow, nn);
-        } else {
-          await ExplorerService.copyTo(item.path, currentPath, ow, nn);
-        }
-        successCount++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("already exists in the destination")) {
-          const fileName = msg.match(/"([^"]+)" already exists/)?.[1] ?? item.path.split(/[\\/]/).pop() ?? "file";
-          set({
-            operationLoading: false,
-            pasteConflict: {
-              sourcePath: item.path,
-              destDir: currentPath,
-              fileName,
-              isCut,
-              remainingItems: items.slice(i + 1),
-            },
-          });
-          if (successCount > 0) loadDirectory(currentPath, set);
-          return;
-        }
+      const fileName = nn ?? item.path.split(/[\\/]/).pop() ?? "file";
+
+      if (!ow && !nn && existingNames.has(fileName)) {
         set({
-          operationLoading: false,
-          operationError: msg,
-          notification: `Failed: ${msg}`,
+          pasteConflict: {
+            sourcePath: item.path,
+            destDir: currentPath,
+            fileName,
+            isCut,
+            remainingItems: items.slice(i + 1).map((it) => ({ path: it.path })),
+          },
         });
-        break;
+        return;
       }
+
+      const transferType = isCut ? "move" : "copy";
+      const job = TransferService.addJob(transferType as "copy" | "move", fileName, item.path, currentPath, 0);
+      TransferService.setStatus(job.id, "running");
+      startTransfer(job.id, item.path, currentPath, transferType, ow, nn).catch(() =>
+        TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
+      );
+      queued++;
     }
-    if (successCount > 0) {
-      set({ notification: `${isCut ? "Moved" : "Pasted"} ${successCount} item(s)` });
-      if (isCut) { ClipboardService.clear(); }
-      loadDirectory(currentPath, set);
+
+    if (queued > 0) {
+      set({ notification: `${isCut ? "Moving" : "Copying"} ${queued} item(s)...` });
+      if (isCut) ClipboardService.clear();
     }
-    set({ operationLoading: false });
   },
 
   pasteConflict: null,
@@ -448,6 +450,19 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
   notification: null,
   clearNotification: () => set({ notification: null }),
+
+  spaceError: null,
+  dismissSpaceError: () => set({ spaceError: null }),
+  retrySpaceError: () => {
+    const err = get().spaceError;
+    if (!err) return;
+    const job = TransferService.addJob(err.transferType as "copy" | "move", err.name, err.source, err.destination, 0);
+    TransferService.setStatus(job.id, "running");
+    startTransfer(job.id, err.source, err.destination, err.transferType).catch(() =>
+      TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
+    );
+    set({ spaceError: null });
+  },
 }));
 
 onBridgeEvent("search:progress", (payload) => {
@@ -462,6 +477,34 @@ ClipboardService.subscribe(() => {
     clipboardCount: ClipboardService.getItems().length,
     clipboardOperation: ClipboardService.getOperation(),
   });
+});
+
+onBridgeEvent("transfer:progress", (payload) => {
+  if (payload.status === "failed" && payload.error) {
+    const job = TransferService.getJob(payload.transferId);
+    if (payload.error.includes("Not enough disk space") && job) {
+      useExplorerStore.setState({
+        spaceError: {
+          transferId: payload.transferId,
+          error: payload.error,
+          destination: job.destination,
+          source: job.source,
+          transferType: job.type,
+          name: job.name,
+        },
+      });
+    } else {
+      useExplorerStore.setState({ notification: payload.error });
+    }
+    return;
+  }
+  if (payload.status !== "completed") return;
+  const { currentPath } = useExplorerStore.getState();
+  if (!currentPath) return;
+  const job = TransferService.getJob(payload.transferId);
+  if (job && job.destination === currentPath) {
+    useExplorerStore.getState().refresh();
+  }
 });
 
 export { getParentPath };

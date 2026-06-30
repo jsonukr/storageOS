@@ -79,3 +79,22 @@ export function searchDirectory(
 ): Promise<DirectoryEntry[]> {
   return invoke<DirectoryEntry[]>("search_directory", { path, query, recursive });
 }
+
+/** Start a background file transfer with chunked progress reporting. */
+export function startTransfer(
+  transferId: string,
+  source: string,
+  destinationDir: string,
+  transferType: string,
+  overwrite?: boolean,
+  newName?: string,
+): Promise<void> {
+  return invoke<void>("start_transfer", {
+    transferId,
+    source,
+    destinationDir,
+    transferType,
+    overwrite,
+    newName,
+  });
+}

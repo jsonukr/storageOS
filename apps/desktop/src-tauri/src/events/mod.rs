@@ -23,3 +23,11 @@ pub struct BridgeErrorEventPayload {
     pub code: String,
     pub message: String,
 }
+
+/// Payload for the `search:progress` event.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchProgressPayload {
+    pub directories_scanned: u64,
+    pub files_scanned: u64,
+    pub matches_found: u64,
+}

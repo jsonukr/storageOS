@@ -23,6 +23,7 @@ pub fn run() {
             commands::file_operations::copy_item,
             commands::file_operations::move_item,
             commands::search::search_directory,
+            commands::transfer::start_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running StorageOS");

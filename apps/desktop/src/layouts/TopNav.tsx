@@ -1,6 +1,8 @@
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { useSidebarStore } from "../stores/sidebar";
 import { useThemeStore } from "../stores/theme";
+import { useExplorerStore } from "../stores/explorer";
 
 const routeLabels: Record<string, string> = {
   "/": "Explorer",
@@ -39,26 +41,7 @@ export function TopNav() {
       </nav>
 
       {/* Search box (center) */}
-      <div className="flex-1 flex justify-center px-8 max-w-xl mx-auto">
-        <div className="relative w-full">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
-          >
-            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search files and folders..."
-            className="w-full h-7 rounded-md border border-border bg-surface-secondary pl-8 pr-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
-            readOnly
-          />
-        </div>
-      </div>
+      <SearchBox />
 
       {/* Right actions */}
       <div className="flex items-center gap-0.5">
@@ -99,5 +82,113 @@ export function TopNav() {
         </button>
       </div>
     </header>
+  );
+}
+
+const SEARCH_DEBOUNCE_MS = 300;
+
+function SearchBox() {
+  const [inputValue, setInputValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const currentPath = useExplorerStore((s) => s.currentPath);
+  const performSearch = useExplorerStore((s) => s.performSearch);
+  const clearSearch = useExplorerStore((s) => s.clearSearch);
+  const searchLoading = useExplorerStore((s) => s.searchLoading);
+  const searchQuery = useExplorerStore((s) => s.searchQuery);
+  const searchRecursive = useExplorerStore((s) => s.searchRecursive);
+  const setSearchRecursive = useExplorerStore((s) => s.setSearchRecursive);
+
+  useEffect(() => {
+    if (searchQuery === "" && inputValue !== "") {
+      setInputValue("");
+    }
+  }, [searchQuery]);
+
+  const handleClear = useCallback(() => {
+    setInputValue("");
+    clearSearch();
+    inputRef.current?.focus();
+  }, [clearSearch]);
+
+  useEffect(() => {
+    if (!inputValue.trim()) {
+      clearSearch();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      performSearch(inputValue);
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [inputValue, performSearch, clearSearch]);
+
+  const handleToggleRecursive = useCallback(() => {
+    const next = !searchRecursive;
+    setSearchRecursive(next);
+    if (inputValue.trim()) {
+      performSearch(inputValue);
+    }
+  }, [searchRecursive, setSearchRecursive, inputValue, performSearch]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      handleClear();
+      inputRef.current?.blur();
+    }
+  };
+
+  const placeholder = currentPath === null
+    ? "Select a folder to search..."
+    : "Search files and folders...";
+
+  return (
+    <div className="flex-1 flex items-center gap-2 px-8 max-w-xl mx-auto">
+      <div className="relative w-full">
+        {searchLoading ? (
+          <div className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 border-[1.5px] border-accent border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
+          >
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        )}
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          className="w-full h-7 rounded-md border border-border bg-surface-secondary pl-8 pr-7 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
+        />
+        {inputValue && (
+          <button
+            onClick={handleClear}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+            aria-label="Clear search"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+      <label className="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={searchRecursive}
+          onChange={handleToggleRecursive}
+          className="h-3 w-3 rounded border-border accent-accent cursor-pointer"
+        />
+        <span className="text-[11px] text-text-secondary whitespace-nowrap">Search subfolders</span>
+      </label>
+    </div>
   );
 }

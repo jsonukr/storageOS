@@ -89,3 +89,23 @@ export type BridgeErrorCode =
   | "INVALID_ARGUMENT"
   | "IO_ERROR"
   | "TIMEOUT";
+
+/** Progress payload emitted during recursive search. */
+export interface SearchProgressPayload {
+  readonly directories_scanned: number;
+  readonly files_scanned: number;
+  readonly matches_found: number;
+}
+
+/** Progress payload emitted during file transfers. */
+export interface TransferProgressPayload {
+  readonly transferId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly bytesTransferred: number;
+  readonly totalBytes: number;
+  readonly progress: number;
+  readonly speedBytesPerSecond: number;
+  readonly estimatedRemainingMs: number;
+  readonly elapsedMs: number;
+  readonly error: string | null;
+}

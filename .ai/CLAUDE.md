@@ -67,3 +67,69 @@ MVP targets Windows only.
 | `.ai/DECISIONS.md` | Architectural decision records |
 | `.ai/CHANGELOG.md` | Chronological change log |
 | `.ai/PROJECT_MEMORY.md` | Cumulative decisions and sprint history |
+
+# UI Design Standard (Mandatory)
+
+StorageOS is a native desktop application.
+
+The UI MUST follow Windows 11 design language.
+
+Do NOT invent custom layouts or visual styles.
+
+Always prefer Windows 11 UX patterns unless explicitly instructed otherwise.
+
+## Visual Style
+
+- Windows 11 File Explorer
+- Windows 11 Settings
+- Windows 11 Context Menus
+- Windows 11 Dialogs
+- Windows 11 Progress Windows
+
+## Design Principles
+
+- Fluent Design
+- Rounded corners (8px)
+- Acrylic / Mica where appropriate
+- Soft shadows
+- Proper spacing
+- Native Windows typography
+- Native iconography style
+- Consistent hover/focus/pressed states
+- Smooth animations (150–250ms)
+
+## Components
+
+When implementing any UI, first ask:
+
+"What would Windows 11 Explorer do?"
+
+Examples:
+
+- Explorer toolbar
+- Breadcrumb bar
+- Address bar
+- Context menu
+- Dialogs
+- Progress windows
+- File list
+- Selection
+- Properties panel
+- Transfer queue
+
+should closely resemble Windows 11 Explorer.
+
+## Never
+
+- Invent dashboard-like layouts.
+- Use mobile-inspired cards where Windows uses lists.
+- Replace Explorer paradigms with web app paradigms.
+- Create custom controls if Windows already has an established interaction.
+
+## Rule
+
+Behavior first.
+Windows UX second.
+Custom branding third.
+
+StorageOS should feel like a native Windows application, not a website running inside a desktop shell.

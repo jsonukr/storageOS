@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { listDrives } from "@/lib/tauri";
+import { useState, useEffect, useCallback } from "react";
+import { listDrives, onBridgeEvent } from "@/lib/tauri";
 import type { LocalDriveInfo } from "@/lib/tauri";
 import { useExplorerStore } from "@/stores/explorer";
 
@@ -60,12 +60,31 @@ export function NavigationPanel() {
   const [drives, setDrives] = useState<LocalDriveInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const refreshDrives = useCallback(() => {
     listDrives()
       .then(setDrives)
-      .catch(() => setDrives([]))
-      .finally(() => setLoading(false));
+      .catch(() => setDrives([]));
   }, []);
+
+  useEffect(() => {
+    refreshDrives();
+    setLoading(false);
+  }, [refreshDrives]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+    onBridgeEvent("transfer:progress", (payload) => {
+      if (payload.status === "completed") refreshDrives();
+    }).then((fn) => { unsubscribe = fn; });
+
+    const onInvalidate = () => refreshDrives();
+    window.addEventListener("drives:invalidate", onInvalidate);
+
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener("drives:invalidate", onInvalidate);
+    };
+  }, [refreshDrives]);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden py-1.5 select-none">

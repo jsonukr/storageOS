@@ -10,3 +10,5 @@ pub mod app_directories;
 pub mod file_operations;
 pub mod list_directory;
 pub mod list_drives;
+pub mod search;
+pub mod transfer;

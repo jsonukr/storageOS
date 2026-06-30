@@ -6,12 +6,13 @@
  */
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { SearchProgressPayload, TransferProgressPayload } from "./types";
 
 /**
  * Known event names emitted by the Rust backend.
  * Extend this union as new events are added.
  */
-export type BridgeEventName = "bridge:ready" | "bridge:error";
+export type BridgeEventName = "bridge:ready" | "bridge:error" | "search:progress" | "transfer:progress";
 
 /** Payload for bridge:ready event. */
 export interface BridgeReadyPayload {
@@ -24,10 +25,14 @@ export interface BridgeErrorEventPayload {
   readonly message: string;
 }
 
+export type { SearchProgressPayload, TransferProgressPayload };
+
 /** Map event names to their payload types. */
 interface BridgeEventMap {
   "bridge:ready": BridgeReadyPayload;
   "bridge:error": BridgeErrorEventPayload;
+  "search:progress": SearchProgressPayload;
+  "transfer:progress": TransferProgressPayload;
 }
 
 /**

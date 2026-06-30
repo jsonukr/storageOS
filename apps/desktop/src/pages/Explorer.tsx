@@ -1,9 +1,11 @@
 import { useCallback, useState, useRef, useEffect } from "react";
 import { useExplorerStore, getParentPath } from "../stores/explorer";
+import { useTransferStore } from "../stores/transfer";
 import { NavigationPanel } from "../components/NavigationPanel";
 import { PropertiesPanel } from "../components/PropertiesPanel";
 import { ResizeHandle } from "../components/ResizeHandle";
 import type { DirectoryEntry } from "@/lib/tauri";
+
 
 const NAV_MIN = 180;
 const NAV_MAX = 360;
@@ -49,8 +51,17 @@ export default function Explorer() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (!e.ctrlKey && !e.metaKey) return;
       const state = useExplorerStore.getState();
+
+      if (e.key === "Delete") {
+        if (state.selectedEntry && !state.deleteTarget) {
+          e.preventDefault();
+          state.confirmDelete(state.selectedEntry);
+        }
+        return;
+      }
+
+      if (!e.ctrlKey && !e.metaKey) return;
       if (e.key === "c") {
         if (state.selectedEntry) {
           e.preventDefault();
@@ -75,6 +86,8 @@ export default function Explorer() {
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <Notification />
+      <TransferProgressOverlay />
+      <InsufficientSpaceDialog />
       {/* ── Toolbar ── */}
       <div className="flex items-center gap-1 border-b border-border bg-toolbar px-2 py-1">
         {/* Navigation */}
@@ -831,17 +844,314 @@ function Notification() {
   const notification = useExplorerStore((s) => s.notification);
   const clearNotification = useExplorerStore((s) => s.clearNotification);
 
+  const isError = notification?.includes("Not enough") || notification?.includes("failed") || notification?.includes("Failed");
+
   useEffect(() => {
     if (!notification) return;
+    if (notification.includes("Copying") || notification.includes("Moving")) {
+      clearNotification();
+      return;
+    }
+    if (isError) return;
     const timer = setTimeout(clearNotification, 3000);
     return () => clearTimeout(timer);
-  }, [notification, clearNotification]);
+  }, [notification, clearNotification, isError]);
 
-  if (!notification) return null;
+  if (!notification || notification.includes("Copying") || notification.includes("Moving")) return null;
 
   return (
-    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-accent text-white text-[12px] font-medium shadow-lg">
+    <div className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-lg text-[12px] font-medium shadow-lg ${
+      isError
+        ? "bg-[#442222] border border-danger text-danger"
+        : "bg-surface border border-border text-text-primary"
+    }`}>
       {notification}
+      {isError && (
+        <button
+          onClick={clearNotification}
+          className="p-0.5 rounded hover:bg-white/10 text-danger/70 hover:text-danger transition-colors"
+          aria-label="Dismiss"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function InsufficientSpaceDialog() {
+  const spaceError = useExplorerStore((s) => s.spaceError);
+  const dismiss = useExplorerStore((s) => s.dismissSpaceError);
+  const retry = useExplorerStore((s) => s.retrySpaceError);
+  const [driveInfo, setDriveInfo] = useState<{ label: string; free: number; total: number } | null>(null);
+  const [showDetails, setShowDetails] = useState(true);
+
+  useEffect(() => {
+    if (!spaceError) { setDriveInfo(null); return; }
+    import("@/lib/tauri").then(({ listDrives }) =>
+      listDrives().then((drives) => {
+        const destRoot = spaceError.destination.slice(0, 3);
+        const drive = drives.find((d) => destRoot.toUpperCase().startsWith(d.letter.toUpperCase()));
+        if (drive) {
+          setDriveInfo({
+            label: drive.label || "Local Disk",
+            free: drive.free_bytes,
+            total: drive.total_bytes,
+          });
+        }
+      }),
+    );
+  }, [spaceError]);
+
+  if (!spaceError) return null;
+
+  const needMatch = spaceError.error.match(/Need ([\d.]+ \w+) but only ([\d.]+ \w+)/);
+  const needText = needMatch?.[1] ?? "more space";
+  const availText = needMatch?.[2] ?? "unknown";
+  const driveLetter = spaceError.destination.slice(0, 2);
+  const driveLabel = driveInfo?.label || "Local Disk";
+  const displayName = driveLabel === "Local Disk" ? `${driveLabel} (${driveLetter})` : `${driveLabel} (${driveLetter})`;
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center pointer-events-none">
+      <div className="pointer-events-auto w-[460px] rounded-lg overflow-hidden shadow-2xl border border-[#5a1520]"
+        style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+
+        {/* Maroon title bar */}
+        <div className="flex items-center justify-between px-3 py-1.5" style={{ background: "#6b1a2a" }}>
+          <div className="flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-white/80">
+              <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M7 4v4M7 9.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+            <span className="text-[11px] text-white/90 font-normal">1 Interrupted Action</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" aria-label="Minimize">
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" strokeWidth="1.2" /></svg>
+            </button>
+            <button onClick={dismiss} className="p-1 rounded hover:bg-red-500 text-white/70 hover:text-white transition-colors" aria-label="Close">
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="bg-surface">
+          <div className="px-4 pt-3 pb-2">
+            <p className="text-[13px] text-text-primary">
+              There is not enough space on {displayName}. You need an additional {needText} to copy these files.
+            </p>
+          </div>
+
+          {showDetails && driveInfo && (
+            <div className="px-4 pb-3">
+              <div className="flex items-center gap-3 px-3 py-2.5 rounded-md bg-surface-secondary border border-border">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="shrink-0 text-text-tertiary">
+                  <rect x="3" y="8" width="26" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="5" y="10" width="18" height="12" rx="1" fill="currentColor" opacity="0.15" />
+                  <rect x="24" y="14" width="3" height="4" rx="0.5" fill="currentColor" opacity="0.3" />
+                </svg>
+                <div>
+                  <p className="text-[12px] text-text-primary font-medium">{displayName}</p>
+                  <p className="text-[11px] text-text-secondary">Space free: {formatProgressBytes(driveInfo.free)}</p>
+                  <p className="text-[11px] text-text-secondary">Total size: {formatProgressBytes(driveInfo.total)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex justify-end gap-2 px-4 pb-3">
+            <button
+              onClick={retry}
+              className="px-5 py-1.5 text-[12px] font-medium rounded bg-surface-secondary border border-border text-text-primary hover:bg-surface-hover transition-colors"
+            >
+              Try Again
+            </button>
+            <button
+              onClick={dismiss}
+              className="px-5 py-1.5 text-[12px] font-medium rounded bg-surface-secondary border border-border text-text-primary hover:bg-surface-hover transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+
+          {/* Toggle details */}
+          <button
+            onClick={() => setShowDetails((v) => !v)}
+            className="flex items-center gap-1 px-4 py-2 w-full text-[12px] text-text-secondary hover:text-text-primary border-t border-border hover:bg-surface-hover transition-colors"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+              className={`transition-transform duration-150 ${showDetails ? "" : "rotate-180"}`}>
+              <path d="M2 6.5L5 3.5 8 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {showDetails ? "Fewer details" : "More details"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatProgressBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / Math.pow(1024, i);
+  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function getLastSegment(path: string): string {
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+function TransferProgressOverlay() {
+  const jobs = useTransferStore((s) => s.jobs);
+  const clearCompleted = useTransferStore((s) => s.clearCompleted);
+  const [dismissed, setDismissed] = useState(false);
+  const [showDetails, setShowDetails] = useState(true);
+
+  const activeJobs = jobs.filter(
+    (j) => j.status === "running" || j.status === "preparing",
+  );
+
+  const hasActive = activeJobs.length > 0;
+
+  useEffect(() => {
+    if (hasActive) setDismissed(false);
+  }, [hasActive]);
+
+  if (activeJobs.length === 0 || dismissed) return null;
+
+  const totalBytes = activeJobs.reduce((sum, j) => sum + j.totalBytes, 0);
+  const transferred = activeJobs.reduce((sum, j) => sum + j.bytesTransferred, 0);
+  const totalSpeed = activeJobs.reduce((sum, j) => sum + j.speed, 0);
+  const overallProgress = totalBytes > 0 ? (transferred / totalBytes) * 100 : 0;
+  const progressPct = Math.round(overallProgress);
+
+  const remaining = totalBytes - transferred;
+  const etaSeconds = totalSpeed > 0 ? remaining / totalSpeed : 0;
+  const etaText =
+    totalSpeed <= 0
+      ? "Calculating..."
+      : etaSeconds < 60
+        ? `About ${Math.ceil(etaSeconds)} seconds remaining`
+        : etaSeconds < 3600
+          ? `About ${Math.ceil(etaSeconds / 60)} minutes remaining`
+          : `About ${Math.floor(etaSeconds / 3600)}h ${Math.ceil((etaSeconds % 3600) / 60)}m remaining`;
+
+  const currentJob = activeJobs[0];
+  const operationType = currentJob.type === "move" ? "Moving" : "Copying";
+  const sourceName = getLastSegment(currentJob.source);
+  const destName = getLastSegment(currentJob.destination);
+  const itemsRemaining = activeJobs.length;
+  const remainingBytes = activeJobs.reduce((sum, j) => sum + (j.totalBytes - j.bytesTransferred), 0);
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
+      <div className="pointer-events-auto w-[480px] rounded-lg overflow-hidden shadow-2xl border border-[#5a1520]"
+        style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.35)" }}>
+
+        {/* ── Maroon title bar ── */}
+        <div className="flex items-center justify-between px-3 py-1.5" style={{ background: "#6b1a2a" }}>
+          <span className="text-[11px] text-white/90 font-normal">{progressPct}% complete</span>
+          <div className="flex items-center gap-1">
+            <button className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" aria-label="Minimize">
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" strokeWidth="1.2" /></svg>
+            </button>
+            <button
+              onClick={() => { setDismissed(true); clearCompleted(); }}
+              className="p-1 rounded hover:bg-red-500 text-white/70 hover:text-white transition-colors"
+              aria-label="Close"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Content area ── */}
+        <div className="bg-surface">
+          {/* Header: operation description */}
+          <div className="flex items-center justify-between px-4 pt-3 pb-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] text-text-primary">
+                {operationType} {activeJobs.length} item{activeJobs.length !== 1 ? "s" : ""} from{" "}
+                <span className="font-semibold">{sourceName}</span> to{" "}
+                <span className="font-semibold">{destName}</span>
+              </p>
+              <p className="text-[13px] text-text-primary mt-0.5">{progressPct}% complete</p>
+            </div>
+            <div className="flex items-center gap-1 ml-3 shrink-0">
+              {/* Pause button (visual only — not wired yet) */}
+              <button className="p-1.5 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors" aria-label="Pause" title="Pause">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M5 3h2v10H5zM9 3h2v10H9z" fill="currentColor" />
+                </svg>
+              </button>
+              {/* Cancel button */}
+              <button
+                onClick={() => { setDismissed(true); clearCompleted(); }}
+                className="p-1.5 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors"
+                aria-label="Cancel" title="Cancel"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="px-4 pb-3">
+            <div className="h-[6px] bg-border rounded-sm overflow-hidden">
+              <div
+                className="h-full bg-[#0078d4] transition-all duration-300"
+                style={{ width: `${Math.min(overallProgress, 100)}%` }}
+              />
+            </div>
+
+            {/* Speed (right aligned) */}
+            <div className="flex justify-end mt-1.5">
+              <span className="text-[12px] text-text-secondary">
+                Speed: {totalSpeed > 0 ? `${formatProgressBytes(totalSpeed)}/s` : "—"}
+              </span>
+            </div>
+          </div>
+
+          {/* Details section */}
+          {showDetails && (
+            <div className="px-4 pb-3 space-y-0.5">
+              <p className="text-[12px] text-text-secondary">
+                Name: <span className="text-text-primary">{currentJob.name}</span>
+              </p>
+              <p className="text-[12px] text-text-secondary">
+                Time remaining: <span className="text-text-primary">{etaText}</span>
+              </p>
+              <p className="text-[12px] text-text-secondary">
+                Items remaining: <span className="text-text-primary">{itemsRemaining} ({formatProgressBytes(remainingBytes)})</span>
+              </p>
+            </div>
+          )}
+
+          {/* Toggle details */}
+          <button
+            onClick={() => setShowDetails((v) => !v)}
+            className="flex items-center gap-1 px-4 py-2 w-full text-[12px] text-text-secondary hover:text-text-primary border-t border-border hover:bg-surface-hover transition-colors"
+          >
+            <svg
+              width="10" height="10" viewBox="0 0 10 10" fill="none"
+              className={`transition-transform duration-150 ${showDetails ? "" : "rotate-180"}`}
+            >
+              <path d="M2 6.5L5 3.5 8 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {showDetails ? "Fewer details" : "More details"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

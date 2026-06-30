@@ -5,10 +5,10 @@
  * Never call `@tauri-apps/api` directly from application code.
  */
 
-export { health, version, platform, appDirectories, listDrives, listDirectory, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory } from "./commands";
+export { health, version, platform, appDirectories, listDrives, listDirectory, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory, startTransfer } from "./commands";
 
 export { onBridgeEvent } from "./events";
-export type { BridgeEventName, BridgeReadyPayload, BridgeErrorEventPayload, SearchProgressPayload } from "./events";
+export type { BridgeEventName, BridgeReadyPayload, BridgeErrorEventPayload, SearchProgressPayload, TransferProgressPayload } from "./events";
 
 export { BridgeError } from "./errors";
 
@@ -23,4 +23,5 @@ export type {
   DriveType,
   BridgeErrorPayload,
   BridgeErrorCode,
+  TransferProgressPayload,
 } from "./types";

@@ -91,3 +91,59 @@ All notable changes to StorageOS, logged after each commit.
   - Context menu: right-click entry (Open/Rename/Delete), right-click background (New Folder)
   - Toolbar New Folder button wired (disabled when no directory open)
   - Directory auto-refreshes after every successful operation
+- **Local filename search (LS-008A)**: Non-blocking filename search in current directory
+  - Rust `services/search.rs`: current-directory search, case-insensitive substring matching, reuses DirectoryEntry type
+  - Async Rust command via `tauri::async_runtime::spawn_blocking` — UI never blocks
+  - TypeScript bridge: searchDirectory() command, ExplorerService extended
+  - Explorer store: search state (query, results, loading, error) with generation counter for cancellation
+  - TopNav SearchBox: 300ms debounce, small loading spinner in search box, clear button, Escape to clear, never disabled
+  - FileArea: keeps directory listing visible while searching; results replace listing only after completion
+  - NoResultsState with query text; StatusBar shows result count during search
+  - Search box shows "Select a folder to search..." when no directory open (not disabled)
+  - Search cleared automatically on navigation; does not change currentPath
+- **Recursive search (LS-008B)**: Optional deep search across subfolders with live progress
+  - Extended `search_directory()` Rust service with `recursive: bool` parameter, BFS walk via VecDeque
+  - Skips symbolic links, ignores inaccessible directories (permission errors silently skipped)
+  - Progress callback in service layer; command layer throttles to 250ms via `Instant` tracking
+  - Rust emits `search:progress` events with `SearchProgressPayload` (directories_scanned, files_scanned, matches_found)
+  - TypeScript event system extended: `SearchProgressPayload` type, `"search:progress"` in `BridgeEventMap`
+  - Explorer store: `searchRecursive`, `searchProgress`, `searchDurationMs` state; module-level event listener
+  - TopNav: "Search subfolders" checkbox next to search box; toggling re-triggers active search
+  - StatusBar: live progress counters during search, completion time after (e.g. "Search completed in 1.4s")
+  - Generation counter cancellation works across recursive/non-recursive mode switches
+  - Directory listing stays visible until search completes; current-folder search unchanged when unchecked
+- **Transfer engine foundation (LS-009A)**: Infrastructure-only transfer queue system
+  - `services/transfer/types.ts`: TransferJob, TransferStatus (7 states), TransferType (copy | move)
+  - `services/transfer/TransferQueue.ts`: queue with enqueue, dequeue, cancel, pause, resume, clearCompleted, updateProgress, setStatus
+  - Subscription pattern: listeners notified on every mutation, status transitions enforced
+  - `services/transfer/TransferService.ts`: public API — UI talks only to this service, queue is encapsulated
+  - `stores/transfer.ts`: Zustand store subscribing to TransferService changes
+  - Transfers page: professional table with 8 columns, grouped sections (Active/Paused/Queued/Finished)
+  - Progress bars color-coded by status, action buttons (Pause/Resume/Cancel/Remove), Clear Finished
+  - 7 mock jobs seeded for visual verification — no real filesystem operations
+  - Utility functions: formatBytes, formatSpeed, formatRemaining (ETA from speed + remaining bytes)
+- **Clipboard and copy foundation (LS-009B)**: Copy/Cut/Paste workflow without filesystem operations
+  - `services/clipboard/`: ClipboardItem type (providerId, path, type, size, name), ClipboardService with copy/cut/clear/subscribe
+  - Provider-agnostic design: `providerId` field supports local and future cloud providers
+  - Explorer store: `copyEntries()`, `cutEntries()`, `pasteEntries()` actions; `clipboardCount` reactive state
+  - Paste creates queued TransferJobs via TransferService — no actual file copy/move occurs
+  - Cut clears clipboard after paste; copy preserves it for repeated paste
+  - Context menu: Copy/Cut/Paste on entry right-click; New Folder + Paste on background right-click
+  - Paste greyed out when clipboard empty or no directory open
+  - ContextMenuItem `disabled` prop for correct enable/disable states
+- **Real-time transfer progress (LS-010A)**: Chunked transfer engine replacing blocking `fs::copy()`
+  - Rust `services/transfer_worker.rs`: 4MB chunked read/write via BufReader/BufWriter, progress events every 100ms
+  - `execute_transfer()`: calculates total size upfront, streams chunks, emits `transfer:progress` events via `app.emit()`
+  - Progress payload: transferId, status, bytesTransferred, totalBytes, progress %, speedBytesPerSecond, estimatedRemainingMs, elapsedMs, error
+  - Directory support: recursive chunked copy with cumulative progress tracking across all files in tree
+  - Move optimization: `fs::rename` first (instant same-volume), chunked copy+delete fallback for cross-volume (ERROR_NOT_SAME_DEVICE = 17)
+  - Error recovery: cleans up partial copies on failure, handles edge case "copied but failed to delete source"
+  - Rust `commands/transfer.rs`: async `start_transfer` command, spawns worker via `spawn_blocking`, returns immediately (non-blocking)
+  - TypeScript bridge: `TransferProgressPayload` type, `transfer:progress` event in BridgeEventMap, `startTransfer()` IPC command
+  - TransferStore: event-driven via `onBridgeEvent("transfer:progress")` — updates TransferService on each event, never polls
+  - TransferQueue.updateProgress: now accepts totalBytes (Rust reports actual size), auto-transitions queued→running on first progress
+  - Explorer store `pasteEntries()`: rewritten as non-blocking — pre-checks conflicts via entries array, creates TransferJob + fire-and-forget `startTransfer()`
+  - Explorer auto-refreshes when a transfer targeting the current path completes
+  - Transfers page: removed 7 mock jobs, added Elapsed column (9 columns), all data from real transfer events
+  - Conflict dialog from LS-009B continues working — pre-check before transfer start
+  - 11 IPC commands total (added start_transfer)
