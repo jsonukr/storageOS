@@ -45,6 +45,20 @@ impl BridgeError {
             message: message.into(),
         }
     }
+
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self {
+            code: BridgeErrorCode::PermissionDenied,
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_argument(message: impl Into<String>) -> Self {
+        Self {
+            code: BridgeErrorCode::InvalidArgument,
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for BridgeError {
@@ -61,16 +75,3 @@ impl From<std::io::Error> for BridgeError {
     }
 }
 
-/// Serialize `BridgeError` as JSON for the Tauri IPC boundary.
-impl From<BridgeError> for tauri::ipc::InvokeError {
-    fn from(err: BridgeError) -> Self {
-        tauri::ipc::InvokeError::from_serde_json(
-            serde_json::to_value(err).unwrap_or_else(|_| {
-                serde_json::json!({
-                    "code": "INTERNAL",
-                    "message": "Failed to serialize error"
-                })
-            }),
-        )
-    }
-}

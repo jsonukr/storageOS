@@ -1,8 +1,9 @@
-import { useCallback } from "react";
-import { useExplorerStore } from "../stores/explorer";
+import { useCallback, useState, useRef, useEffect } from "react";
+import { useExplorerStore, getParentPath } from "../stores/explorer";
 import { NavigationPanel } from "../components/NavigationPanel";
 import { PropertiesPanel } from "../components/PropertiesPanel";
 import { ResizeHandle } from "../components/ResizeHandle";
+import type { DirectoryEntry } from "@/lib/tauri";
 
 const NAV_MIN = 180;
 const NAV_MAX = 360;
@@ -33,28 +34,40 @@ export default function Explorer() {
     [propertiesWidth, setPropertiesWidth],
   );
 
+  const goBack = useExplorerStore((s) => s.goBack);
+  const goForward = useExplorerStore((s) => s.goForward);
+  const goUp = useExplorerStore((s) => s.goUp);
+  const refresh = useExplorerStore((s) => s.refresh);
+  const currentPath = useExplorerStore((s) => s.currentPath);
+  const historyStack = useExplorerStore((s) => s.historyStack);
+  const forwardStack = useExplorerStore((s) => s.forwardStack);
+
+  const canGoBack = historyStack.length > 0;
+  const canGoForward = forwardStack.length > 0;
+  const canGoUp = currentPath !== null && getParentPath(currentPath) !== null;
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* ── Toolbar ── */}
       <div className="flex items-center gap-1 border-b border-border bg-toolbar px-2 py-1">
         {/* Navigation */}
         <div className="flex items-center gap-0.5">
-          <ToolbarButton label="Back" disabled>
+          <ToolbarButton label="Back" disabled={!canGoBack} onClick={goBack}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M9 3L5 7l4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </ToolbarButton>
-          <ToolbarButton label="Forward" disabled>
+          <ToolbarButton label="Forward" disabled={!canGoForward} onClick={goForward}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M5 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </ToolbarButton>
-          <ToolbarButton label="Up" disabled>
+          <ToolbarButton label="Up" disabled={!canGoUp} onClick={goUp}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M7 11V3M3.5 6.5L7 3l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </ToolbarButton>
-          <ToolbarButton label="Refresh">
+          <ToolbarButton label="Refresh" disabled={currentPath === null} onClick={refresh}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M11.5 7A4.5 4.5 0 112.5 7M2.5 3v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -65,7 +78,7 @@ export default function Explorer() {
 
         {/* Actions */}
         <div className="flex items-center gap-0.5">
-          <ToolbarButton label="New Folder">
+          <ToolbarButton label="New Folder" disabled={currentPath === null} onClick={() => useExplorerStore.getState().openNewFolderDialog()}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               <path d="M7 6v4M5 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -132,24 +145,7 @@ export default function Explorer() {
       </div>
 
       {/* ── Address Bar ── */}
-      <div className="flex items-center gap-1.5 border-b border-border bg-toolbar px-2 py-1">
-        <div className="flex items-center flex-1 h-7 rounded-md border border-border bg-surface px-1.5 gap-0.5 text-[12px]">
-          <BreadcrumbItem label="Home" first />
-          <BreadcrumbSep />
-          <BreadcrumbItem label="This PC" />
-          <BreadcrumbSep />
-          <BreadcrumbItem label="Local Drives" active />
-        </div>
-        <button
-          className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary transition-colors"
-          aria-label="Refresh"
-          title="Refresh"
-        >
-          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-            <path d="M11.5 7A4.5 4.5 0 112.5 7M2.5 3v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      </div>
+      <AddressBar />
 
       {/* ── Three-panel content ── */}
       <div className="flex flex-1 overflow-hidden">
@@ -163,34 +159,7 @@ export default function Explorer() {
         <ResizeHandle onResize={onNavResize} direction="right" />
 
         {/* Center: File Area */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-surface min-w-0">
-          {/* Column headers (details view) */}
-          {viewMode === "details" && (
-            <div className="flex items-center h-7 border-b border-border-subtle px-3 text-[11px] font-medium text-text-tertiary select-none gap-4 bg-surface-secondary">
-              <span className="flex-1">Name</span>
-              <span className="w-28 text-right">Date Modified</span>
-              <span className="w-16 text-right">Type</span>
-              <span className="w-20 text-right">Size</span>
-            </div>
-          )}
-
-          {/* Empty state */}
-          <div className="flex-1 flex items-center justify-center overflow-auto">
-            <div className="flex flex-col items-center text-center px-6 max-w-xs">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-subtle mb-3">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-accent">
-                  <path d="M3 6.5C3 5.12 4.12 4 5.5 4H9.5L12 6.5H18.5C19.88 6.5 21 7.62 21 9V18c0 1.38-1.12 2.5-2.5 2.5h-13C4.12 20.5 3 19.38 3 18V6.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <h2 className="text-[13px] font-semibold text-text-primary mb-1">
-                This folder is empty
-              </h2>
-              <p className="text-[12px] text-text-secondary leading-relaxed">
-                Connect a storage provider or navigate to a directory to see files here.
-              </p>
-            </div>
-          </div>
-        </div>
+        <FileArea viewMode={viewMode} />
 
         {/* Right: Properties Panel */}
         {propertiesOpen && (
@@ -205,7 +174,599 @@ export default function Explorer() {
           </>
         )}
       </div>
+
+      {/* Overlays */}
+      <NewFolderDialog />
+      <RenameDialog />
+      <DeleteConfirmDialog />
+      <ContextMenu />
     </div>
+  );
+}
+
+// ── Address Bar ──
+
+function parseBreadcrumbs(path: string): { label: string; path: string }[] {
+  const normalized = path.replace(/\//g, "\\");
+  const parts = normalized.split("\\").filter(Boolean);
+  const crumbs: { label: string; path: string }[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const segment = parts[i];
+    if (i === 0 && /^[A-Za-z]:$/.test(segment)) {
+      crumbs.push({ label: segment + "\\", path: segment + "\\" });
+    } else {
+      const fullPath = crumbs.length > 0
+        ? crumbs[crumbs.length - 1].path.replace(/\\$/, "") + "\\" + segment
+        : segment;
+      crumbs.push({ label: segment, path: fullPath });
+    }
+  }
+  return crumbs;
+}
+
+function AddressBar() {
+  const currentPath = useExplorerStore((s) => s.currentPath);
+  const navigateTo = useExplorerStore((s) => s.navigateTo);
+  const refresh = useExplorerStore((s) => s.refresh);
+
+  const crumbs = currentPath !== null ? parseBreadcrumbs(currentPath) : [];
+
+  return (
+    <div className="flex items-center gap-1.5 border-b border-border bg-toolbar px-2 py-1">
+      <div className="flex items-center flex-1 h-7 rounded-md border border-border bg-surface px-1.5 gap-0.5 text-[12px] overflow-hidden">
+        <BreadcrumbItem
+          label="This PC"
+          first
+          active={currentPath === null}
+        />
+        {crumbs.map((crumb, i) => (
+          <span key={crumb.path} className="flex items-center gap-0.5 shrink-0">
+            <BreadcrumbSep />
+            <BreadcrumbItem
+              label={crumb.label}
+              active={i === crumbs.length - 1}
+              onClick={i < crumbs.length - 1 ? () => navigateTo(crumb.path) : undefined}
+            />
+          </span>
+        ))}
+      </div>
+      <button
+        className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary transition-colors disabled:opacity-35 disabled:pointer-events-none"
+        aria-label="Refresh"
+        title="Refresh"
+        disabled={currentPath === null}
+        onClick={refresh}
+      >
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+          <path d="M11.5 7A4.5 4.5 0 112.5 7M2.5 3v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+// ── File Area ──
+
+function FileArea({ viewMode }: { viewMode: string }) {
+  const entries = useExplorerStore((s) => s.entries);
+  const loading = useExplorerStore((s) => s.loading);
+  const error = useExplorerStore((s) => s.error);
+  const currentPath = useExplorerStore((s) => s.currentPath);
+  const selectEntry = useExplorerStore((s) => s.selectEntry);
+  const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const hideContextMenu = useExplorerStore((s) => s.hideContextMenu);
+
+  const handleBackgroundContext = (e: React.MouseEvent) => {
+    e.preventDefault();
+    selectEntry(null);
+    showContextMenu(e.clientX, e.clientY, null);
+  };
+
+  return (
+    <div
+      className="flex-1 flex flex-col overflow-hidden bg-surface min-w-0"
+      onClick={() => { selectEntry(null); hideContextMenu(); }}
+      onContextMenu={handleBackgroundContext}
+    >
+      {viewMode === "details" && (
+        <div className="flex items-center h-7 border-b border-border-subtle px-3 text-[11px] font-medium text-text-tertiary select-none bg-surface-secondary">
+          <span className="flex-1 min-w-0">Name</span>
+          <span className="w-32 text-right shrink-0">Date Modified</span>
+          <span className="w-20 text-right shrink-0">Type</span>
+          <span className="w-20 text-right shrink-0">Size</span>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-auto">
+        {loading ? (
+          <LoadingState />
+        ) : error ? (
+          <ErrorState message={error} />
+        ) : currentPath === null ? (
+          <WelcomeState />
+        ) : entries.length === 0 ? (
+          <EmptyState />
+        ) : viewMode === "details" ? (
+          <DetailsView entries={entries} />
+        ) : (
+          <GridView entries={entries} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <div className="flex flex-col items-center gap-2">
+        <div className="h-5 w-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-[12px] text-text-secondary">Loading...</span>
+      </div>
+    </div>
+  );
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <div className="flex flex-col items-center text-center px-6 max-w-xs">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-danger/10 mb-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-danger">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M12 8v5M12 15.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h2 className="text-[13px] font-semibold text-text-primary mb-1">
+          Cannot access folder
+        </h2>
+        <p className="text-[12px] text-text-secondary leading-relaxed">
+          {message}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function WelcomeState() {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <div className="flex flex-col items-center text-center px-6 max-w-xs">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-subtle mb-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-accent">
+            <path d="M3 6.5C3 5.12 4.12 4 5.5 4H9.5L12 6.5H18.5C19.88 6.5 21 7.62 21 9V18c0 1.38-1.12 2.5-2.5 2.5h-13C4.12 20.5 3 19.38 3 18V6.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h2 className="text-[13px] font-semibold text-text-primary mb-1">
+          Select a drive
+        </h2>
+        <p className="text-[12px] text-text-secondary leading-relaxed">
+          Click a drive in the navigation panel to browse its contents.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <div className="flex flex-col items-center text-center px-6 max-w-xs">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-subtle mb-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-accent">
+            <path d="M3 6.5C3 5.12 4.12 4 5.5 4H9.5L12 6.5H18.5C19.88 6.5 21 7.62 21 9V18c0 1.38-1.12 2.5-2.5 2.5h-13C4.12 20.5 3 19.38 3 18V6.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h2 className="text-[13px] font-semibold text-text-primary mb-1">
+          This folder is empty
+        </h2>
+        <p className="text-[12px] text-text-secondary leading-relaxed">
+          There are no files or folders in this directory.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
+  const selectedEntry = useExplorerStore((s) => s.selectedEntry);
+  const selectEntry = useExplorerStore((s) => s.selectEntry);
+  const openEntry = useExplorerStore((s) => s.openEntry);
+  const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+
+  return (
+    <div className="text-[12px]">
+      {entries.map((entry) => {
+        const isSelected = selectedEntry?.full_path === entry.full_path;
+        return (
+          <div
+            key={entry.full_path}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry); }}
+            onDoubleClick={() => openEntry(entry)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
+            className={`flex items-center h-[26px] px-3 transition-colors cursor-default select-none border-b border-transparent ${
+              isSelected
+                ? "bg-accent/10 border-accent/20"
+                : "hover:bg-surface-hover hover:border-border-subtle"
+            }`}
+          >
+            <span className="flex items-center gap-1.5 flex-1 min-w-0">
+              <FileIcon entry={entry} />
+              <span className={`truncate ${entry.hidden ? "opacity-50" : ""}`}>
+                {entry.name}
+              </span>
+            </span>
+            <span className="w-32 text-right text-text-tertiary shrink-0">
+              {formatDate(entry.last_modified)}
+            </span>
+            <span className="w-20 text-right text-text-tertiary shrink-0">
+              {entry.is_directory ? "Folder" : formatExtension(entry.extension)}
+            </span>
+            <span className="w-20 text-right text-text-tertiary shrink-0">
+              {entry.is_directory ? "" : formatSize(entry.size)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GridView({ entries }: { entries: DirectoryEntry[] }) {
+  const selectedEntry = useExplorerStore((s) => s.selectedEntry);
+  const selectEntry = useExplorerStore((s) => s.selectEntry);
+  const openEntry = useExplorerStore((s) => s.openEntry);
+  const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-1 p-2">
+      {entries.map((entry) => {
+        const isSelected = selectedEntry?.full_path === entry.full_path;
+        return (
+          <div
+            key={entry.full_path}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry); }}
+            onDoubleClick={() => openEntry(entry)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
+            className={`flex flex-col items-center gap-1 p-2 rounded-md transition-colors cursor-default select-none ${
+              entry.hidden ? "opacity-50" : ""
+            } ${
+              isSelected
+                ? "bg-accent/10 ring-1 ring-accent/30"
+                : "hover:bg-surface-hover"
+            }`}
+          >
+            <GridFileIcon entry={entry} />
+            <span className="text-[11px] text-text-primary text-center leading-tight line-clamp-2 w-full break-all">
+              {entry.name}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FileIcon({ entry }: { entry: DirectoryEntry }) {
+  if (entry.is_directory) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0 text-warning">
+        <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" fill="currentColor" opacity="0.2" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0 text-text-tertiary">
+      <path d="M3.5 1.5h5l3 3V11.5a1 1 0 01-1 1h-7a1 1 0 01-1-1v-9a1 1 0 011-1z" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
+      <path d="M8.5 1.5V4.5h3" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function GridFileIcon({ entry }: { entry: DirectoryEntry }) {
+  if (entry.is_directory) {
+    return (
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-warning">
+        <path d="M3 8C3 6.9 3.9 6 5 6h7l2 2h11c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V8z" fill="currentColor" opacity="0.2" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-text-tertiary">
+      <path d="M8 4h10l6 6v16a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+      <path d="M18 4v6h6" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function formatDate(timestamp: number): string {
+  if (timestamp === 0) return "";
+  const d = new Date(timestamp * 1000);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${month}/${day}/${year} ${hours}:${mins}`;
+}
+
+function formatExtension(ext: string): string {
+  return ext ? `.${ext.toUpperCase()}` : "File";
+}
+
+function formatSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
+}
+
+// ── Dialogs & Context Menu ──
+
+function NewFolderDialog() {
+  const [name, setName] = useState("New Folder");
+  const open = useExplorerStore((s) => s.newFolderDialogOpen);
+  const close = useExplorerStore((s) => s.closeNewFolderDialog);
+  const create = useExplorerStore((s) => s.createFolder);
+  const operationLoading = useExplorerStore((s) => s.operationLoading);
+  const operationError = useExplorerStore((s) => s.operationError);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName("New Folder");
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 0);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name.trim()) create(name.trim());
+  };
+
+  return (
+    <DialogOverlay onClose={close}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <h3 className="text-[13px] font-semibold text-text-primary">New Folder</h3>
+        <input
+          ref={inputRef}
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="h-8 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+          disabled={operationLoading}
+        />
+        {operationError && (
+          <p className="text-[11px] text-danger">{operationError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <DialogButton onClick={close} disabled={operationLoading}>Cancel</DialogButton>
+          <DialogButton primary type="submit" disabled={operationLoading || !name.trim()}>
+            {operationLoading ? "Creating..." : "Create"}
+          </DialogButton>
+        </div>
+      </form>
+    </DialogOverlay>
+  );
+}
+
+function RenameDialog() {
+  const target = useExplorerStore((s) => s.renameTarget);
+  const cancel = useExplorerStore((s) => s.cancelRename);
+  const rename = useExplorerStore((s) => s.renameEntry);
+  const operationLoading = useExplorerStore((s) => s.operationLoading);
+  const operationError = useExplorerStore((s) => s.operationError);
+  const [newName, setNewName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (target) {
+      setNewName(target.name);
+      setTimeout(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        const dotIndex = target.name.lastIndexOf(".");
+        if (!target.is_directory && dotIndex > 0) {
+          input.setSelectionRange(0, dotIndex);
+        } else {
+          input.select();
+        }
+      }, 0);
+    }
+  }, [target]);
+
+  if (!target) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newName.trim();
+    if (trimmed && trimmed !== target.name) rename(target, trimmed);
+  };
+
+  return (
+    <DialogOverlay onClose={cancel}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <h3 className="text-[13px] font-semibold text-text-primary">Rename</h3>
+        <input
+          ref={inputRef}
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          className="h-8 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+          disabled={operationLoading}
+        />
+        {operationError && (
+          <p className="text-[11px] text-danger">{operationError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <DialogButton onClick={cancel} disabled={operationLoading}>Cancel</DialogButton>
+          <DialogButton primary type="submit" disabled={operationLoading || !newName.trim() || newName.trim() === target.name}>
+            {operationLoading ? "Renaming..." : "Rename"}
+          </DialogButton>
+        </div>
+      </form>
+    </DialogOverlay>
+  );
+}
+
+function DeleteConfirmDialog() {
+  const target = useExplorerStore((s) => s.deleteTarget);
+  const cancel = useExplorerStore((s) => s.cancelDelete);
+  const doDelete = useExplorerStore((s) => s.deleteEntry);
+  const operationLoading = useExplorerStore((s) => s.operationLoading);
+  const operationError = useExplorerStore((s) => s.operationError);
+
+  if (!target) return null;
+
+  return (
+    <DialogOverlay onClose={cancel}>
+      <div className="flex flex-col gap-3">
+        <h3 className="text-[13px] font-semibold text-text-primary">Delete</h3>
+        <p className="text-[12px] text-text-secondary leading-relaxed">
+          Are you sure you want to permanently delete <strong className="text-text-primary">"{target.name}"</strong>?
+          {target.is_directory && " This will delete all contents inside the folder."}
+          {" "}This action cannot be undone.
+        </p>
+        {operationError && (
+          <p className="text-[11px] text-danger">{operationError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <DialogButton onClick={cancel} disabled={operationLoading}>Cancel</DialogButton>
+          <DialogButton danger onClick={() => doDelete(target)} disabled={operationLoading}>
+            {operationLoading ? "Deleting..." : "Delete"}
+          </DialogButton>
+        </div>
+      </div>
+    </DialogOverlay>
+  );
+}
+
+function ContextMenu() {
+  const ctx = useExplorerStore((s) => s.contextMenu);
+  const hide = useExplorerStore((s) => s.hideContextMenu);
+  const startRename = useExplorerStore((s) => s.startRename);
+  const confirmDelete = useExplorerStore((s) => s.confirmDelete);
+  const openNewFolderDialog = useExplorerStore((s) => s.openNewFolderDialog);
+  const openEntry = useExplorerStore((s) => s.openEntry);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ctx) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) hide();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [ctx, hide]);
+
+  if (!ctx) return null;
+
+  const { x, y, entry } = ctx;
+
+  return (
+    <div
+      ref={menuRef}
+      className="fixed z-50 min-w-[160px] rounded-lg border border-border bg-surface shadow-lg py-1 text-[12px]"
+      style={{ left: x, top: y }}
+    >
+      {entry ? (
+        <>
+          {entry.is_directory && (
+            <ContextMenuItem
+              label="Open"
+              onClick={() => { hide(); openEntry(entry); }}
+            />
+          )}
+          <ContextMenuItem
+            label="Rename"
+            onClick={() => { hide(); startRename(entry); }}
+          />
+          <ContextMenuDivider />
+          <ContextMenuItem
+            label="Delete"
+            danger
+            onClick={() => { hide(); confirmDelete(entry); }}
+          />
+        </>
+      ) : (
+        <ContextMenuItem
+          label="New Folder"
+          onClick={() => { hide(); openNewFolderDialog(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ContextMenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-3 py-1.5 transition-colors ${
+        danger
+          ? "text-danger hover:bg-danger/10"
+          : "text-text-primary hover:bg-surface-hover"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ContextMenuDivider() {
+  return <div className="h-px bg-border my-1 mx-2" />;
+}
+
+function DialogOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="w-[340px] rounded-xl border border-border bg-surface p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function DialogButton({
+  children,
+  onClick,
+  disabled = false,
+  primary = false,
+  danger = false,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+  danger?: boolean;
+  type?: "button" | "submit";
+}) {
+  let cls = "h-8 px-4 rounded-md text-[12px] font-medium transition-colors disabled:opacity-40 disabled:pointer-events-none ";
+  if (danger) {
+    cls += "bg-danger text-white hover:bg-danger/90";
+  } else if (primary) {
+    cls += "bg-accent text-white hover:bg-accent/90";
+  } else {
+    cls += "border border-border text-text-secondary hover:bg-surface-hover";
+  }
+  return (
+    <button type={type} onClick={onClick} disabled={disabled} className={cls}>
+      {children}
+    </button>
   );
 }
 
@@ -270,15 +831,20 @@ function BreadcrumbItem({
   label,
   first = false,
   active = false,
+  onClick,
 }: {
   label: string;
   first?: boolean;
   active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-surface-hover transition-colors ${
-        active ? "text-text-primary font-medium" : "text-text-secondary"
+      onClick={onClick}
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors shrink-0 ${
+        active
+          ? "text-text-primary font-medium"
+          : "text-text-secondary hover:bg-surface-hover cursor-pointer"
       }`}
     >
       {first && (

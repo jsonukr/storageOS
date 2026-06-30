@@ -8,7 +8,10 @@
 import { invoke } from "./invoke";
 import type {
   AppDirectoriesResponse,
+  DirectoryEntry,
   HealthResponse,
+  LocalDriveInfo,
+  OperationResult,
   PlatformResponse,
   VersionResponse,
 } from "./types";
@@ -31,4 +34,29 @@ export function platform(): Promise<PlatformResponse> {
 /** Get application-specific directories (data, config, cache, log). */
 export function appDirectories(): Promise<AppDirectoriesResponse> {
   return invoke<AppDirectoriesResponse>("app_directories");
+}
+
+/** List all detected local drives on the system. */
+export function listDrives(): Promise<LocalDriveInfo[]> {
+  return invoke<LocalDriveInfo[]>("list_drives");
+}
+
+/** List contents of a directory. */
+export function listDirectory(path: string): Promise<DirectoryEntry[]> {
+  return invoke<DirectoryEntry[]>("list_dir", { path });
+}
+
+/** Create a new folder inside `parent` with the given `name`. */
+export function createFolder(parent: string, name: string): Promise<OperationResult> {
+  return invoke<OperationResult>("create_folder", { parent, name });
+}
+
+/** Rename a file or folder at `path` to `newName`. */
+export function renameItem(path: string, newName: string): Promise<OperationResult> {
+  return invoke<OperationResult>("rename_item", { path, newName });
+}
+
+/** Delete a file or folder at `path`. Permanent deletion. */
+export function deleteItem(path: string): Promise<OperationResult> {
+  return invoke<OperationResult>("delete_item", { path });
 }

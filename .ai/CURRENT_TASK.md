@@ -1,6 +1,6 @@
 # Current Task
 
-## No active task
+## LS-005: Local Drive Detection — COMPLETED
 
 Waiting for next task assignment.
 

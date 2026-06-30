@@ -3,12 +3,10 @@
 //! Each submodule exposes one `#[tauri::command]` function.
 //! All commands are re-exported here for registration in `lib.rs`.
 
-mod health;
-mod version;
-mod platform;
-mod app_directories;
-
-pub use health::health;
-pub use version::version;
-pub use platform::platform;
-pub use app_directories::app_directories;
+pub mod health;
+pub mod version;
+pub mod platform;
+pub mod app_directories;
+pub mod file_operations;
+pub mod list_directory;
+pub mod list_drives;

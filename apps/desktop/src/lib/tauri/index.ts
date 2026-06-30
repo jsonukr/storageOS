@@ -5,7 +5,7 @@
  * Never call `@tauri-apps/api` directly from application code.
  */
 
-export { health, version, platform, appDirectories } from "./commands";
+export { health, version, platform, appDirectories, listDrives, listDirectory, createFolder, renameItem, deleteItem } from "./commands";
 
 export { onBridgeEvent } from "./events";
 export type { BridgeEventName, BridgeReadyPayload, BridgeErrorEventPayload } from "./events";
@@ -17,6 +17,10 @@ export type {
   VersionResponse,
   PlatformResponse,
   AppDirectoriesResponse,
+  LocalDriveInfo,
+  DirectoryEntry,
+  OperationResult,
+  DriveType,
   BridgeErrorPayload,
   BridgeErrorCode,
 } from "./types";

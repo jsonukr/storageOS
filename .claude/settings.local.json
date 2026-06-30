@@ -54,7 +54,17 @@
       "Bash(sed -i 's/- \\\\*\\\\*Dark mode\\\\*\\\\*: CSS custom properties, toggleable via Zustand store/- **Dark mode**: Enhanced CSS palette, toggleable via Zustand store/' .ai/PROJECT_STATE.md)",
       "Bash(sed -i 's/- \\\\*\\\\*Pages\\\\*\\\\*: Dashboard, Explorer, Transfers, Devices, Settings \\(placeholders\\)/- **Pages**: Explorer \\(toolbar + address bar + empty state\\), Transfers, Devices, Settings/' .ai/PROJECT_STATE.md)",
       "Bash(sed -i 's/- \\\\[x\\\\] React Router with 5 placeholder pages/- [x] React Router with 4 routes \\(Explorer-first landing\\)/' .ai/PROJECT_STATE.md)",
-      "Bash(sed -i 's/LS-002 — Tauri IPC bridge foundation complete \\(2026-06-30\\)/LS-003 — Professional UI layout complete \\(2026-06-30\\)/' .ai/PROJECT_STATE.md)"
+      "Bash(sed -i 's/LS-002 — Tauri IPC bridge foundation complete \\(2026-06-30\\)/LS-003 — Professional UI layout complete \\(2026-06-30\\)/' .ai/PROJECT_STATE.md)",
+      "Bash(\"$USERPROFILE/.cargo/bin/rustc.exe\" --version)",
+      "Bash(\"$USERPROFILE/.cargo/bin/cargo.exe\" --version)",
+      "Bash(export PATH=\"$USERPROFILE/.cargo/bin:$PATH\")",
+      "Bash(rustup default stable)",
+      "Bash(\"$USERPROFILE/.cargo/bin/rustup.exe\" default stable)",
+      "Bash(\"$USERPROFILE/.cargo/bin/rustup.exe\" toolchain install stable)",
+      "Bash(\"$USERPROFILE/.cargo/bin/rustup.exe\" toolchain uninstall stable)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo update cookie --breaking 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo build 2>&1 | Select-String \"error\\\\[\")",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npx tauri dev 2>&1)"
     ]
   }
 }
