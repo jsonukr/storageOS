@@ -45,7 +45,16 @@
       "WebSearch",
       "Bash(claude mcp add --scope user --transport http figma https://mcp.figma.com/mcp)",
       "mcp__figma__whoami",
-      "Bash(npx tsc -b --noEmit)"
+      "Bash(npx tsc -b --noEmit)",
+      "Bash(npx oxlint src/core/)",
+      "Bash(npm run build)",
+      "Bash(npx vite build)",
+      "Bash(sed -i 's/- \\\\*\\\\*Routing\\\\*\\\\*: React Router v7 \\(5 routes\\)/- **Routing**: React Router v7 \\(4 routes — Explorer-first\\)/' .ai/PROJECT_STATE.md)",
+      "Bash(sed -i 's/- \\\\*\\\\*Layout\\\\*\\\\*: Sidebar + TopNav + Content Area + StatusBar/- **Layout**: Sidebar \\(icons, logo, collapse, version\\) + TopNav \\(breadcrumbs, search, notifications, profile\\) + Content + StatusBar/' .ai/PROJECT_STATE.md)",
+      "Bash(sed -i 's/- \\\\*\\\\*Dark mode\\\\*\\\\*: CSS custom properties, toggleable via Zustand store/- **Dark mode**: Enhanced CSS palette, toggleable via Zustand store/' .ai/PROJECT_STATE.md)",
+      "Bash(sed -i 's/- \\\\*\\\\*Pages\\\\*\\\\*: Dashboard, Explorer, Transfers, Devices, Settings \\(placeholders\\)/- **Pages**: Explorer \\(toolbar + address bar + empty state\\), Transfers, Devices, Settings/' .ai/PROJECT_STATE.md)",
+      "Bash(sed -i 's/- \\\\[x\\\\] React Router with 5 placeholder pages/- [x] React Router with 4 routes \\(Explorer-first landing\\)/' .ai/PROJECT_STATE.md)",
+      "Bash(sed -i 's/LS-002 — Tauri IPC bridge foundation complete \\(2026-06-30\\)/LS-003 — Professional UI layout complete \\(2026-06-30\\)/' .ai/PROJECT_STATE.md)"
     ]
   }
 }

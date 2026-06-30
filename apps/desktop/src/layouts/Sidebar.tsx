@@ -3,11 +3,44 @@ import { useSidebarStore } from "../stores/sidebar";
 import type { NavItem } from "../types";
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", path: "/" },
-  { label: "Explorer", path: "/explorer" },
-  { label: "Transfers", path: "/transfers" },
-  { label: "Devices", path: "/devices" },
-  { label: "Settings", path: "/settings" },
+  {
+    label: "Explorer",
+    path: "/",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M2 4.5C2 3.67 2.67 3 3.5 3H7l1.5 1.5H14.5c.83 0 1.5.67 1.5 1.5V13.5c0 .83-.67 1.5-1.5 1.5H3.5c-.83 0-1.5-.67-1.5-1.5V4.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Transfers",
+    path: "/transfers",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M4 7l3-3 3 3M7 4v8M14 11l-3 3-3-3M11 14V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Devices",
+    path: "/devices",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <rect x="3" y="3" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M6 15h6M9 12v3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Settings",
+    path: "/settings",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="2.5" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M9 2v1.5M9 14.5V16M2 9h1.5M14.5 9H16M4.05 4.05l1.06 1.06M12.89 12.89l1.06 1.06M4.05 13.95l1.06-1.06M12.89 5.11l1.06-1.06" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 export function Sidebar() {
@@ -15,31 +48,69 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`flex flex-col border-r border-border bg-sidebar transition-[width] duration-200 ${
-        collapsed ? "w-16" : "w-56"
+      className={`flex flex-col border-r border-border bg-sidebar transition-[width] duration-200 ease-in-out ${
+        collapsed ? "w-14" : "w-52"
       }`}
     >
-      <div className="flex h-12 items-center px-4 font-semibold">
-        {!collapsed && <span>StorageOS</span>}
+      {/* Logo */}
+      <div className="flex h-12 items-center gap-2.5 px-3.5 border-b border-border">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 4.5C2 3.12 3.12 2 4.5 2h5C10.88 2 12 3.12 12 4.5v5c0 1.38-1.12 2.5-2.5 2.5h-5C3.12 12 2 10.88 2 9.5v-5Z" fill="currentColor" fillOpacity="0.3" />
+            <path d="M5 5.5h4M5 7.5h4M5 9.5h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+        </div>
+        {!collapsed && (
+          <span className="text-sm font-semibold text-text-primary tracking-tight overflow-hidden whitespace-nowrap">
+            StorageOS
+          </span>
+        )}
       </div>
-      <nav className="flex-1 space-y-1 px-2 py-2">
+
+      {/* Navigation */}
+      <nav className="flex-1 px-2 py-3 space-y-0.5">
         {navItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             end={item.path === "/"}
             className={({ isActive }) =>
-              `block rounded-md px-3 py-2 text-sm transition-colors ${
+              `group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150 ${
                 isActive
-                  ? "bg-accent text-white"
-                  : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
+                  ? "bg-sidebar-active text-accent-text"
+                  : "text-text-secondary hover:bg-sidebar-hover hover:text-text-primary"
               }`
             }
           >
-            {!collapsed && item.label}
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-accent" />
+                )}
+                <span className={`shrink-0 transition-colors duration-150 ${
+                  isActive ? "text-accent" : "text-text-tertiary group-hover:text-text-secondary"
+                }`}>
+                  {item.icon}
+                </span>
+                {!collapsed && (
+                  <span className="overflow-hidden whitespace-nowrap">
+                    {item.label}
+                  </span>
+                )}
+              </>
+            )}
           </NavLink>
         ))}
       </nav>
+
+      {/* Footer — app version */}
+      <div className="border-t border-border px-3.5 py-2">
+        {!collapsed ? (
+          <span className="text-[11px] text-text-tertiary">v0.1.0</span>
+        ) : (
+          <span className="flex justify-center text-[10px] text-text-tertiary">0.1</span>
+        )}
+      </div>
     </aside>
   );
 }

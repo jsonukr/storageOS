@@ -54,10 +54,10 @@ StorageOS/
 - **Styling**: Tailwind CSS v4 (Vite plugin)
 - **State**: Zustand (theme store, sidebar store)
 - **Data**: TanStack Query (configured, no queries yet)
-- **Routing**: React Router v7 (5 routes)
-- **Layout**: Sidebar + TopNav + Content Area + StatusBar
-- **Dark mode**: CSS custom properties, toggleable via Zustand store
-- **Pages**: Dashboard, Explorer, Transfers, Devices, Settings (placeholders)
+- **Routing**: React Router v7 (4 routes — Explorer-first)
+- **Layout**: Sidebar (icons, logo, collapse, version) + TopNav (breadcrumbs, search, notifications, profile) + Content + StatusBar
+- **Dark mode**: Enhanced CSS palette, toggleable via Zustand store
+- **Pages**: Explorer (toolbar + address bar + empty state), Transfers, Devices, Settings
 - **Frontend build**: Compiles successfully (tsc + vite build)
 - **Tauri build**: Blocked — Rust toolchain not installed
 
@@ -67,7 +67,7 @@ StorageOS/
 - [x] Documentation organized (vision, prd, srs)
 - [x] Desktop frontend scaffolded and compiling
 - [x] Tailwind CSS v4 configured with dark mode theme
-- [x] React Router with 5 placeholder pages
+- [x] React Router with 4 routes (Explorer-first landing)
 - [x] Zustand stores (theme, sidebar)
 - [x] TanStack Query provider
 - [x] App layout shell (Sidebar, TopNav, Content, StatusBar)
@@ -83,20 +83,35 @@ StorageOS/
   - States: EmptyState, LoadingState, ErrorState
   - Domain: StorageCard, DeviceCard, TransferCard, SearchInput
   - Barrel exports via design-system/index.ts
+- [x] Storage provider contracts (src/core/storage/)
+  - StorageProvider interface (18 methods: init, auth, list, search, CRUD, transfers, streams, watch)
+  - StorageItem, StorageItemId, StorageItemPage, ListOptions, SearchOptions
+  - StorageDrive, ProviderType (11 types), ConnectionState, StorageQuota
+  - StorageCapabilities (17 capability flags + limits)
+  - StorageError class with 16 error codes and retryable flag
+  - StorageEvents for real-time change watching
+  - StorageOperation types (copy, move, upload, download with progress)
+  - Barrel exports via core/index.ts
+- [x] Tauri IPC bridge (src/lib/tauri/ + src-tauri/src/)
+  - TypeScript: typed invoke wrapper, command definitions, event system, error mapping
+  - Rust: commands/ (health, version, platform, app_directories), core/ (AppState), errors/ (BridgeError), events/
+  - 4 IPC commands: health(), version(), platform(), app_directories()
+  - BridgeError with 6 error codes, JSON-serialized across IPC boundary
+  - Typed event system (bridge:ready, bridge:error)
+  - Barrel exports via lib/tauri/index.ts
 
 ## What Does NOT Exist
 
 - [ ] Rust toolchain (cannot compile Tauri)
 - [ ] Docker Desktop
 - [ ] GitHub CLI
-- [ ] Any backend code
 - [ ] Any business logic
 - [ ] Any API integration
 - [ ] Any authentication
 - [ ] Any database
 - [ ] Any tests
 - [ ] Any CI/CD
-- [ ] Git remote / GitHub repo
+- [x] Git remote (GitHub) and branch strategy (main + develop)
 
 ## Dependencies (apps/desktop)
 
@@ -106,6 +121,7 @@ StorageOS/
 - react-router-dom 7.18.1
 - zustand 5.0.14
 - @tanstack/react-query 5.101.2
+- @tauri-apps/api (Tauri IPC bridge)
 
 ### Dev
 - tailwindcss 4.3.2
@@ -117,4 +133,4 @@ StorageOS/
 
 ## Last Updated
 
-TASK-101 — Design system foundation complete (2026-06-30)
+LS-003 — Professional UI layout complete (2026-06-30)
