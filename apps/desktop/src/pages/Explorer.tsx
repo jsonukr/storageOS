@@ -46,8 +46,35 @@ export default function Explorer() {
   const canGoForward = forwardStack.length > 0;
   const canGoUp = currentPath !== null && getParentPath(currentPath) !== null;
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!e.ctrlKey && !e.metaKey) return;
+      const state = useExplorerStore.getState();
+      if (e.key === "c") {
+        if (state.selectedEntry) {
+          e.preventDefault();
+          state.copyEntries([state.selectedEntry]);
+        }
+      } else if (e.key === "x") {
+        if (state.selectedEntry) {
+          e.preventDefault();
+          state.cutEntries([state.selectedEntry]);
+        }
+      } else if (e.key === "v") {
+        if (state.currentPath) {
+          e.preventDefault();
+          state.pasteEntries();
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      <Notification />
       {/* ── Toolbar ── */}
       <div className="flex items-center gap-1 border-b border-border bg-toolbar px-2 py-1">
         {/* Navigation */}
@@ -179,6 +206,7 @@ export default function Explorer() {
       <NewFolderDialog />
       <RenameDialog />
       <DeleteConfirmDialog />
+      <PasteConflictDialog />
       <ContextMenu />
     </div>
   );
@@ -256,10 +284,37 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
   const hideContextMenu = useExplorerStore((s) => s.hideContextMenu);
 
+  const searchQuery = useExplorerStore((s) => s.searchQuery);
+  const searchResults = useExplorerStore((s) => s.searchResults);
+  const searchError = useExplorerStore((s) => s.searchError);
+
+  const isSearchActive = searchQuery.length > 0;
+
   const handleBackgroundContext = (e: React.MouseEvent) => {
     e.preventDefault();
     selectEntry(null);
     showContextMenu(e.clientX, e.clientY, null);
+  };
+
+  const renderContent = () => {
+    if (loading) return <LoadingState />;
+    if (error) return <ErrorState message={error} />;
+    if (currentPath === null) return <WelcomeState />;
+
+    if (isSearchActive) {
+      if (searchError) return <ErrorState message={searchError} />;
+      if (searchResults !== null && searchResults.length === 0) return <NoResultsState query={searchQuery} />;
+      if (searchResults !== null) {
+        return viewMode === "details"
+          ? <DetailsView entries={searchResults} />
+          : <GridView entries={searchResults} />;
+      }
+    }
+
+    if (entries.length === 0) return <EmptyState />;
+    return viewMode === "details"
+      ? <DetailsView entries={entries} />
+      : <GridView entries={entries} />;
   };
 
   return (
@@ -278,19 +333,7 @@ function FileArea({ viewMode }: { viewMode: string }) {
       )}
 
       <div className="flex-1 overflow-auto">
-        {loading ? (
-          <LoadingState />
-        ) : error ? (
-          <ErrorState message={error} />
-        ) : currentPath === null ? (
-          <WelcomeState />
-        ) : entries.length === 0 ? (
-          <EmptyState />
-        ) : viewMode === "details" ? (
-          <DetailsView entries={entries} />
-        ) : (
-          <GridView entries={entries} />
-        )}
+        {renderContent()}
       </div>
     </div>
   );
@@ -362,6 +405,27 @@ function EmptyState() {
         </h2>
         <p className="text-[12px] text-text-secondary leading-relaxed">
           There are no files or folders in this directory.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NoResultsState({ query }: { query: string }) {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <div className="flex flex-col items-center text-center px-6 max-w-xs">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-subtle mb-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-accent">
+            <circle cx="10.5" cy="10.5" r="7.5" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M16 16l5 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h2 className="text-[13px] font-semibold text-text-primary mb-1">
+          No results
+        </h2>
+        <p className="text-[12px] text-text-secondary leading-relaxed">
+          No files or folders matching "{query}" were found.
         </p>
       </div>
     </div>
@@ -648,6 +712,140 @@ function DeleteConfirmDialog() {
   );
 }
 
+function PasteConflictDialog() {
+  const conflict = useExplorerStore((s) => s.pasteConflict);
+  const resolve = useExplorerStore((s) => s.resolvePasteConflict);
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  if (!conflict) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div
+        className="w-[500px] overflow-hidden rounded-lg"
+        style={{ boxShadow: "0 8px 30px rgba(0,0,0,0.35)", border: "1.5px solid #6b1a23" }}
+      >
+        {/* ── Title bar — maroon to match banner ── */}
+        <div className="flex items-center h-[32px]" style={{ background: "#501318" }}>
+          <div className="flex items-center gap-2 pl-3 flex-1 min-w-0">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+              <circle cx="8" cy="8" r="7" fill="#d4760a" />
+              <path d="M5.5 8l2 2.5 3-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[11.5px] text-white/90 truncate">Replace or Skip Files</span>
+          </div>
+          <div className="flex items-center h-full">
+            <button className="flex items-center justify-center w-[46px] h-full text-white/50 hover:bg-white/10 transition-colors">
+              <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
+            </button>
+            <button className="flex items-center justify-center w-[46px] h-full text-white/50 hover:bg-white/10 transition-colors">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" strokeWidth="1" /></svg>
+            </button>
+            <button
+              onClick={() => resolve("cancel")}
+              className="flex items-center justify-center w-[46px] h-full text-white/50 hover:bg-[#c42b1c] hover:text-white transition-colors rounded-tr-lg"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Info section — light bg, dark text like Windows ── */}
+        <div className="px-5 pt-3.5 pb-3 bg-surface">
+          <p className="text-[11.5px] text-text-tertiary mb-1" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+            Pasting to current folder
+          </p>
+          <p className="text-[14px] font-semibold text-text-primary leading-snug" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+            The destination has a file named "{conflict.fileName}"
+          </p>
+        </div>
+
+        {/* ── Options — subtle pale blue highlight like Windows ── */}
+        <div className="bg-surface pb-1 px-2">
+          <button
+            onClick={() => resolve("replace")}
+            onMouseEnter={() => setHovered("replace")}
+            onMouseLeave={() => setHovered(null)}
+            className="flex items-center gap-3 w-full text-left px-4 py-[10px] rounded-[3px] transition-colors"
+            style={{ background: hovered === null || hovered === "replace" ? "var(--color-accent-subtle, #cce8ff)" : "transparent" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+              <circle cx="8" cy="8" r="7.5" fill="#16a34a" />
+              <path d="M4.5 8l2.5 2.5 4.5-5" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[13px] font-medium text-text-primary" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+              Replace the file in the destination
+            </span>
+          </button>
+
+          <button
+            onClick={() => resolve("cancel")}
+            onMouseEnter={() => setHovered("skip")}
+            onMouseLeave={() => setHovered(null)}
+            className="flex items-center gap-3 w-full text-left px-4 py-[10px] rounded-[3px] transition-colors"
+            style={{ background: hovered === "skip" ? "var(--color-accent-subtle, #cce8ff)" : "transparent" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+              <path d="M4 8.5a5 5 0 014.5-4.5" stroke="#d9a012" strokeWidth="1.6" strokeLinecap="round" />
+              <path d="M7 2l2 2-2 2" stroke="#d9a012" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M12 7.5a5 5 0 01-4.5 4.5" stroke="#d9a012" strokeWidth="1.6" strokeLinecap="round" />
+              <path d="M9 14l-2-2 2-2" stroke="#d9a012" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[13px] font-medium text-text-primary" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+              Skip this file
+            </span>
+          </button>
+
+          <button
+            onClick={() => resolve("keep_both")}
+            onMouseEnter={() => setHovered("keep")}
+            onMouseLeave={() => setHovered(null)}
+            className="flex items-center gap-3 w-full text-left px-4 py-[10px] rounded-[3px] transition-colors"
+            style={{ background: hovered === "keep" ? "var(--color-accent-subtle, #cce8ff)" : "transparent" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+              <rect x="0.5" y="3" width="9" height="11" rx="1" fill="#3b82f6" stroke="#2563eb" strokeWidth="0.5" />
+              <rect x="5.5" y="2" width="9" height="11" rx="1" fill="#60a5fa" stroke="#3b82f6" strokeWidth="0.5" />
+            </svg>
+            <span className="text-[13px] font-medium text-text-primary" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+              Keep both files
+            </span>
+          </button>
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="flex items-center h-[36px] px-5 bg-surface border-t border-border">
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="none" className="mr-1.5">
+            <path d="M1 5l4-4 4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-text-tertiary" />
+          </svg>
+          <span className="text-[11px] text-text-tertiary" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>Fewer details</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Notification() {
+  const notification = useExplorerStore((s) => s.notification);
+  const clearNotification = useExplorerStore((s) => s.clearNotification);
+
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(clearNotification, 3000);
+    return () => clearTimeout(timer);
+  }, [notification, clearNotification]);
+
+  if (!notification) return null;
+
+  return (
+    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-accent text-white text-[12px] font-medium shadow-lg">
+      {notification}
+    </div>
+  );
+}
+
 function ContextMenu() {
   const ctx = useExplorerStore((s) => s.contextMenu);
   const hide = useExplorerStore((s) => s.hideContextMenu);
@@ -655,6 +853,11 @@ function ContextMenu() {
   const confirmDelete = useExplorerStore((s) => s.confirmDelete);
   const openNewFolderDialog = useExplorerStore((s) => s.openNewFolderDialog);
   const openEntry = useExplorerStore((s) => s.openEntry);
+  const copyEntries = useExplorerStore((s) => s.copyEntries);
+  const cutEntries = useExplorerStore((s) => s.cutEntries);
+  const pasteEntries = useExplorerStore((s) => s.pasteEntries);
+  const clipboardCount = useExplorerStore((s) => s.clipboardCount);
+  const currentPath = useExplorerStore((s) => s.currentPath);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -669,6 +872,7 @@ function ContextMenu() {
   if (!ctx) return null;
 
   const { x, y, entry } = ctx;
+  const canPaste = clipboardCount > 0 && currentPath !== null;
 
   return (
     <div
@@ -681,35 +885,59 @@ function ContextMenu() {
           {entry.is_directory && (
             <ContextMenuItem
               label="Open"
-              onClick={() => { hide(); openEntry(entry); }}
+              onAction={() => { openEntry(entry); hide(); }}
             />
           )}
+          <ContextMenuDivider />
+          <ContextMenuItem
+            label="Copy"
+            onAction={() => { copyEntries([entry]); hide(); }}
+          />
+          <ContextMenuItem
+            label="Cut"
+            onAction={() => { cutEntries([entry]); hide(); }}
+          />
+          <ContextMenuItem
+            label="Paste"
+            disabled={!canPaste}
+            onAction={() => { pasteEntries(); hide(); }}
+          />
+          <ContextMenuDivider />
           <ContextMenuItem
             label="Rename"
-            onClick={() => { hide(); startRename(entry); }}
+            onAction={() => { startRename(entry); hide(); }}
           />
           <ContextMenuDivider />
           <ContextMenuItem
             label="Delete"
             danger
-            onClick={() => { hide(); confirmDelete(entry); }}
+            onAction={() => { confirmDelete(entry); hide(); }}
           />
         </>
       ) : (
-        <ContextMenuItem
-          label="New Folder"
-          onClick={() => { hide(); openNewFolderDialog(); }}
-        />
+        <>
+          <ContextMenuItem
+            label="New Folder"
+            onAction={() => { openNewFolderDialog(); hide(); }}
+          />
+          <ContextMenuDivider />
+          <ContextMenuItem
+            label="Paste"
+            disabled={!canPaste}
+            onAction={() => { pasteEntries(); hide(); }}
+          />
+        </>
       )}
     </div>
   );
 }
 
-function ContextMenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
+function ContextMenuItem({ label, onAction, danger = false, disabled = false }: { label: string; onAction: () => void; danger?: boolean; disabled?: boolean }) {
   return (
     <button
-      onClick={onClick}
-      className={`w-full text-left px-3 py-1.5 transition-colors ${
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); if (!disabled) onAction(); }}
+      disabled={disabled}
+      className={`w-full text-left px-3 py-1.5 transition-colors disabled:opacity-35 disabled:pointer-events-none ${
         danger
           ? "text-danger hover:bg-danger/10"
           : "text-text-primary hover:bg-surface-hover"

@@ -60,3 +60,22 @@ export function renameItem(path: string, newName: string): Promise<OperationResu
 export function deleteItem(path: string): Promise<OperationResult> {
   return invoke<OperationResult>("delete_item", { path });
 }
+
+/** Copy a file or folder to a destination directory. */
+export function copyItem(source: string, destinationDir: string, overwrite?: boolean, newName?: string): Promise<OperationResult> {
+  return invoke<OperationResult>("copy_item", { source, destinationDir, overwrite, newName });
+}
+
+/** Move a file or folder to a destination directory. */
+export function moveItem(source: string, destinationDir: string, overwrite?: boolean, newName?: string): Promise<OperationResult> {
+  return invoke<OperationResult>("move_item", { source, destinationDir, overwrite, newName });
+}
+
+/** Search filenames within a directory. */
+export function searchDirectory(
+  path: string,
+  query: string,
+  recursive?: boolean,
+): Promise<DirectoryEntry[]> {
+  return invoke<DirectoryEntry[]>("search_directory", { path, query, recursive });
+}

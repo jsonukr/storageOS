@@ -17,3 +17,23 @@ pub fn rename_item(path: String, new_name: String) -> Result<OperationResult, Br
 pub fn delete_item(path: String) -> Result<OperationResult, BridgeError> {
     file_operations::delete_item(&path)
 }
+
+#[tauri::command]
+pub fn copy_item(
+    source: String,
+    destination_dir: String,
+    overwrite: Option<bool>,
+    new_name: Option<String>,
+) -> Result<OperationResult, BridgeError> {
+    file_operations::copy_item(&source, &destination_dir, overwrite.unwrap_or(false), new_name.as_deref())
+}
+
+#[tauri::command]
+pub fn move_item(
+    source: String,
+    destination_dir: String,
+    overwrite: Option<bool>,
+    new_name: Option<String>,
+) -> Result<OperationResult, BridgeError> {
+    file_operations::move_item(&source, &destination_dir, overwrite.unwrap_or(false), new_name.as_deref())
+}
