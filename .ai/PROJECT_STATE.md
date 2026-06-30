@@ -52,12 +52,12 @@ StorageOS/
 
 - **Framework**: Tauri v2 (Rust backend) + React 19 + TypeScript 6 + Vite 8
 - **Styling**: Tailwind CSS v4 (Vite plugin)
-- **State**: Zustand (theme store, sidebar store)
+- **State**: Zustand (theme store, sidebar store, explorer store)
 - **Data**: TanStack Query (configured, no queries yet)
 - **Routing**: React Router v7 (4 routes — Explorer-first)
 - **Layout**: Sidebar (icons, logo, collapse, version) + TopNav (breadcrumbs, search, notifications, profile) + Content + StatusBar
 - **Dark mode**: Enhanced CSS palette, toggleable via Zustand store
-- **Pages**: Explorer (toolbar + address bar + empty state), Transfers, Devices, Settings
+- **Pages**: Explorer (3-panel layout: nav panel + file area + properties), Transfers, Devices, Settings
 - **Frontend build**: Compiles successfully (tsc + vite build)
 - **Tauri build**: Blocked — Rust toolchain not installed
 
@@ -68,7 +68,7 @@ StorageOS/
 - [x] Desktop frontend scaffolded and compiling
 - [x] Tailwind CSS v4 configured with dark mode theme
 - [x] React Router with 4 routes (Explorer-first landing)
-- [x] Zustand stores (theme, sidebar)
+- [x] Zustand stores (theme, sidebar, explorer)
 - [x] TanStack Query provider
 - [x] App layout shell (Sidebar, TopNav, Content, StatusBar)
 - [x] Tauri v2 config (src-tauri/)
@@ -99,6 +99,15 @@ StorageOS/
   - BridgeError with 6 error codes, JSON-serialized across IPC boundary
   - Typed event system (bridge:ready, bridge:error)
   - Barrel exports via lib/tauri/index.ts
+- [x] Professional Explorer layout (LS-004)
+  - 3-panel layout: NavigationPanel (resizable, 240px) + FileArea + PropertiesPanel (resizable, 280px, collapsed by default)
+  - Toolbar: Navigation (Back/Forward/Up/Refresh) | Actions (New Folder/Upload/Download) | View (Grid/List/Details) | More (Sort/Filter/Properties)
+  - Breadcrumb address bar with folder icons, clickable segments, refresh button
+  - NavigationPanel: 6 collapsible sections (Quick Access, Favorites, Local Storage, Cloud Storage, Network, Trash)
+  - ResizeHandle component for panel resizing
+  - Column headers for details view (Name, Date Modified, Type, Size)
+  - StatusBar: Ready indicator, current provider, item count, zoom percentage
+  - Explorer store (viewMode, panel widths, properties toggle)
 
 ## What Does NOT Exist
 
@@ -133,4 +142,4 @@ StorageOS/
 
 ## Last Updated
 
-LS-003 — Professional UI layout complete (2026-06-30)
+LS-004 — Professional Explorer layout complete (2026-06-30)

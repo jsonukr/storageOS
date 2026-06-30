@@ -1,8 +1,4 @@
-import { useThemeStore } from "../stores/theme";
-
 export function StatusBar() {
-  const isDark = useThemeStore((s) => s.isDark);
-
   return (
     <footer className="flex h-6 items-center border-t border-border bg-statusbar px-3 text-[11px] text-text-secondary select-none">
       <div className="flex items-center gap-3">
@@ -11,14 +7,12 @@ export function StatusBar() {
           Ready
         </StatusItem>
         <StatusDivider />
-        <StatusItem>0 items</StatusItem>
+        <StatusItem>Local Storage</StatusItem>
         <StatusDivider />
-        <StatusItem>No provider</StatusItem>
+        <StatusItem>0 items</StatusItem>
       </div>
       <div className="flex-1" />
-      <StatusItem>
-        {isDark ? "Dark" : "Light"}
-      </StatusItem>
+      <StatusItem>100%</StatusItem>
     </footer>
   );
 }

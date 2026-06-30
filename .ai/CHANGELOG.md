@@ -33,3 +33,11 @@ All notable changes to StorageOS, logged after each commit.
   - StatusBar: ready indicator, item count, provider status, theme label
   - Removed Dashboard page, Explorer-first landing experience
   - 4 routes (Explorer, Transfers, Devices, Settings)
+- **Explorer layout (LS-004)**: Professional 3-panel file manager
+  - Left: NavigationPanel with 6 collapsible sections (Quick Access, Favorites, Local Storage, Cloud Storage, Network, Trash)
+  - Center: Toolbar (Navigation | Actions | View | More) + breadcrumb address bar + file area with column headers
+  - Right: PropertiesPanel (collapsed by default, "No item selected" placeholder)
+  - Resizable panels with drag handles (ResizeHandle component)
+  - Explorer Zustand store (viewMode, panel widths, properties toggle)
+  - StatusBar: Ready + provider + item count + zoom %
+  - 3 view modes: grid, list, details (with column headers)
