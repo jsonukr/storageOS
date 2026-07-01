@@ -2,6 +2,8 @@
 
 One Workspace, Every Storage.
 
+StorageOS is a distributed personal storage platform that provides secure, real-time access to every authorized storage location from every authorized device.
+
 ## Project Structure
 
 ```

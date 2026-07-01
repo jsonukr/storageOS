@@ -491,3 +491,40 @@ Build StorageOS like a commercial software product.
 Quality is always more important than speed.
 
 Every commit should be something we are proud to showcase.
+
+
+## Domain Language Rule
+
+All new models must be provider-agnostic.
+
+Avoid names that are tied to a single platform or storage technology.
+
+Prefer:
+
+StorageEntry
+
+StorageRoot
+
+StorageProvider
+
+StorageDevice
+
+StorageLocation
+
+Instead of:
+
+Drive
+
+Directory
+
+WindowsDrive
+
+LocalFolder
+
+NTFSFile
+
+ExplorerItem
+
+The domain model is the single source of truth.
+
+UI models may adapt domain models for presentation but must not redefine the domain language.

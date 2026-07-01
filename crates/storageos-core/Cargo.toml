@@ -1,0 +1,12 @@
+[package]
+name = "storageos-core"
+version = "0.1.0"
+edition = "2021"
+description = "StorageOS shared business logic — filesystem, transfers, search, clipboard, providers, and events"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }

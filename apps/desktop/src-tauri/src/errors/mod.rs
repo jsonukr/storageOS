@@ -75,3 +75,25 @@ impl From<std::io::Error> for BridgeError {
     }
 }
 
+impl From<storageos_core::errors::CoreError> for BridgeError {
+    fn from(err: storageos_core::errors::CoreError) -> Self {
+        use storageos_core::errors::ErrorKind;
+        let code = match err.kind {
+            ErrorKind::NotFound => BridgeErrorCode::NotFound,
+            ErrorKind::PermissionDenied => BridgeErrorCode::PermissionDenied,
+            ErrorKind::InvalidArgument => BridgeErrorCode::InvalidArgument,
+            ErrorKind::IoError => BridgeErrorCode::IoError,
+            ErrorKind::Timeout => BridgeErrorCode::Timeout,
+            ErrorKind::AlreadyExists
+            | ErrorKind::NotSupported
+            | ErrorKind::ProviderError
+            | ErrorKind::Cancelled
+            | ErrorKind::Internal => BridgeErrorCode::Internal,
+        };
+        Self {
+            code,
+            message: err.message,
+        }
+    }
+}
+

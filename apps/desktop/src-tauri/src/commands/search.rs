@@ -1,5 +1,6 @@
 //! IPC command: filename search (async, non-blocking).
 
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
@@ -21,21 +22,26 @@ pub async fn search_directory(
     let recursive = recursive.unwrap_or(false);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut last_emit = Instant::now().checked_sub(PROGRESS_THROTTLE).unwrap_or_else(Instant::now);
+        let last_emit = Cell::new(
+            Instant::now()
+                .checked_sub(PROGRESS_THROTTLE)
+                .unwrap_or_else(Instant::now),
+        );
 
-        let mut on_progress = |dirs: u64, files: u64, matches: u64| {
+        search::search_directory(&path, &query, recursive, &|snapshot| {
             let now = Instant::now();
-            if now.duration_since(last_emit) >= PROGRESS_THROTTLE {
-                let _ = app.emit("search:progress", SearchProgressPayload {
-                    directories_scanned: dirs,
-                    files_scanned: files,
-                    matches_found: matches,
-                });
-                last_emit = now;
+            if now.duration_since(last_emit.get()) >= PROGRESS_THROTTLE {
+                let _ = app.emit(
+                    "search:progress",
+                    SearchProgressPayload {
+                        directories_scanned: snapshot.directories_scanned as u64,
+                        files_scanned: snapshot.files_scanned as u64,
+                        matches_found: snapshot.matches_found as u64,
+                    },
+                );
+                last_emit.set(now);
             }
-        };
-
-        search::search_directory(&path, &query, recursive, &mut on_progress)
+        })
     })
     .await
     .map_err(|e| BridgeError::internal(e.to_string()))?

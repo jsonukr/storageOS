@@ -4,6 +4,127 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Sprint 05 — Core Foundation
+
+#### 2026-07-01
+
+- **Search engine migration (A-007)**: Search engine moved from desktop into `storageos_core::search`
+  - Created `search/engine.rs`: `search_directory()` with generic progress callback `&dyn Fn(&SearchSnapshot)` — transport-independent, no Tauri dependency. BFS traversal via VecDeque, case-insensitive substring matching, symlink skipping, sorted results (folders first, then case-insensitive alpha), 9 unit tests
+  - Updated `search/mod.rs`: sub-module declaration, re-export `search_directory`, `SearchService` trait retained
+  - Made `is_hidden()` in `filesystem/directory.rs` `pub(crate)` — search module reuses it, eliminating the duplicate platform-specific implementation from desktop
+  - Desktop `services/search.rs`: thin adapter (16 lines) — calls core, maps `Entry` → `DirectoryEntry` via existing `From` impl, `CoreError` → `BridgeError` via existing `From` impl
+  - Desktop `commands/search.rs`: progress callback uses `Cell<Instant>` for 250ms throttling (compatible with `&dyn Fn` callback pattern), bridges `SearchSnapshot` (u32) → `SearchProgressPayload` (u64) for TypeScript
+  - 41 unit tests all passing (31 existing + 9 new search + 1 existing). Both crates compile clean. No TypeScript/IPC/JSON changes.
+- **Transfer engine migration (A-006)**: Transfer engine moved from desktop into `storageos_core::transfer`
+  - Created `transfer/controller.rs`: signal registry for pause/resume/cancel — `CONTROLS` HashMap<String, Arc<AtomicU8>>, `register()`, `unregister()`, `set_signal()`, signal constants (`SIGNAL_RUNNING`/`SIGNAL_PAUSED`/`SIGNAL_CANCEL`), 2 unit tests
+  - Created `transfer/engine.rs`: `execute_transfer()` with generic progress callback `&dyn Fn(&TransferSnapshot)` — transport-independent, no Tauri dependency. Includes: chunked copy via BufReader/BufWriter (4MB chunks), recursive directory copy, progress/speed/ETA calculation, move optimization (rename first, fall back to copy+delete for cross-volume), disk space validation via `get_free_space()` (Windows cfg-gated), overwrite handling, partial cleanup on cancel/error, 11 unit tests
+  - Updated `transfer/mod.rs`: sub-module declarations, re-exports (`execute_transfer`, `calculate_total_size`, `get_free_space`, `set_signal`, signal constants), `TransferService` trait retained
+  - Uses `std::sync::LazyLock` instead of `once_cell::sync::Lazy` (Rust 1.80+ stdlib)
+  - Uses core constants: `TRANSFER_CHUNK_SIZE` (4MB), `TRANSFER_PROGRESS_INTERVAL_MS` (100ms)
+  - Desktop `services/transfer_worker.rs`: thin adapter — keeps `TransferProgressPayload` (camelCase for TypeScript), converts `&str` transfer_type to `TransferType` enum, bridges core callback to `app.emit("transfer:progress", ...)` via `From<&TransferSnapshot>` impl
+  - Desktop `commands/transfer.rs`: now uses named signal constants (`SIGNAL_PAUSED`, `SIGNAL_RUNNING`, `SIGNAL_CANCEL`) instead of magic numbers (1, 0, 2)
+  - Desktop `once_cell` dependency no longer used by transfer code (kept for other uses)
+  - 31 unit tests all passing (18 existing + 13 new). Both crates compile clean. No TypeScript/IPC/JSON changes.
+- **Filesystem migration (A-005)**: Business logic moved from desktop `services/` into `storageos_core::filesystem`
+  - Created `filesystem/directory.rs`: `list_directory()` → `Vec<Entry>` with sorted output (folders first, case-insensitive alpha), platform-specific `is_hidden()` (#[cfg] gated), 2 unit tests
+  - Created `filesystem/operations.rs`: `create_folder()`, `rename_item()`, `delete_item()`, `copy_item()`, `move_item()` → `CoreResult<OperationResult>`, uses `validate_filename()` from utils, recursive `copy_dir_recursive()`, 5 unit tests
+  - Created `filesystem/drives.rs`: `list_roots()` → `Vec<Root>` with Windows API drive detection (GetLogicalDriveStringsW, GetDriveTypeW, GetDiskFreeSpaceExW, GetVolumeInformationW), stores `volume_label`/`windows_drive_type`/`drive_letter` in `metadata.custom` for adapter reconstruction
+  - Created `filesystem/attributes.rs`: `get_attributes()`, `set_hidden()`, `set_readonly()` → `CoreResult<EntryMetadata>` with Windows GetFileAttributesW/SetFileAttributesW (cfg-gated), Unix `set_readonly` via `PermissionsExt`, `not_supported` error for Unix `set_hidden`
+  - Updated `filesystem/mod.rs`: 4 sub-module declarations, re-exports all public functions, `FileSystemService` trait retained
+  - Added `windows-sys` v0.59 to storageos-core `Cargo.toml` with `[target.'cfg(windows)'.dependencies]` gating
+  - Desktop `services/directory.rs`: thin adapter — calls `storageos_core::filesystem::list_directory()`, maps `Entry` → `DirectoryEntry` via existing `From` impl
+  - Desktop `services/drives.rs`: thin adapter — calls `storageos_core::filesystem::list_roots()`, maps `Root` → `LocalDrive` via new `From<Root> for LocalDrive` impl (reconstructs letter/label/drive_type from metadata.custom)
+  - Desktop `services/file_attributes.rs`: thin adapter — calls core `get_attributes`/`set_hidden`/`set_readonly`, maps `EntryMetadata` → `FileAttributes` via existing `From` impl
+  - Desktop `services/file_operations.rs`: thin adapter — delegates to core, `CoreError` → `BridgeError` via existing `From` impl, `AlreadyExists` error kind now used (was `InvalidArgument`)
+  - 18 unit tests all passing (11 existing + 7 new). Both crates compile clean. No TypeScript changes. No IPC changes. No JSON shape changes.
+- **Shared utilities migration (A-004)**: Reusable utilities, platform abstraction, and constants in storageos-core
+  - Restructured `utils/` into 4 sub-modules:
+    - `utils/path.rs`: `parent_path()`, `is_root_path()`, `file_extension()`, `normalize_separators()` — cross-platform path helpers with 6 unit tests
+    - `utils/validation.rs`: `is_valid_filename()`, `validate_filename()`, `INVALID_FILENAME_CHARS`, `MAX_FILENAME_LENGTH`, Windows reserved name detection — with 2 unit tests
+    - `utils/format.rs`: `format_bytes()`, `format_speed()`, `format_remaining()` — human-readable size/speed/time formatting with 3 unit tests
+    - `utils/time.rs`: `epoch_secs()`, `epoch_millis()`, `system_time_to_epoch_secs()` — Unix timestamp helpers
+  - Created `platform/mod.rs`: `Platform` enum (Windows/Linux/macOS/Android/iOS) with `current()`, `is_desktop()`, `is_mobile()`, `path_separator()`, `display_name()`
+  - Created `config/constants.rs`: centralized magic numbers — `TRANSFER_CHUNK_SIZE` (4MB), `TRANSFER_PROGRESS_INTERVAL_MS` (100), `SEARCH_PROGRESS_INTERVAL_MS` (250), `CLIPBOARD_EXPIRY_SECS` (24h), `HEARTBEAT_INTERVAL_SECS` (30), `APP_NAME`, `APP_IDENTIFIER`, `DEFAULT_AGENT_PORT` (19742)
+  - Desktop: replaced inline filename char validation in `file_operations.rs` with `storageos_core::utils::validate_filename()` (also catches reserved names, trailing dots/spaces)
+  - Desktop: replaced local `format_bytes()` in `transfer_worker.rs` with `storageos_core::utils::format_bytes()`
+  - Desktop: added `From<CoreError> for BridgeError` in `errors/mod.rs` — maps all 10 ErrorKind variants to BridgeErrorCode
+  - 11 unit tests all passing. Both crates compile clean. No TypeScript changes. No IPC changes.
+  - Updated `crates/storageos-core/README.md`: new module structure, migration phases 1-3 marked complete, trait surfaces updated to canonical names
+- **Shared domain model migration (A-003)**: Canonical domain models in storageos-core, desktop wired to consume
+  - Created 10 model sub-modules in `crates/storageos-core/src/models/` following `docs/architecture/DomainModel.md`:
+    - `entry.rs`: Entry, EntryId, EntryKind (File|Folder), EntryMetadata (flat optional + custom HashMap), EntryRef (cross-device pointer)
+    - `root.rs`: Root, RootId, RootKind (7 variants: Drive|Bucket|Library|SharedDrive|Volume|Mount|Container), StorageCapacity, RootMetadata
+    - `transfer.rs`: TransferStatus (6 states), TransferType (Copy|Move), TransferSnapshot (point-in-time progress)
+    - `clipboard.rs`: ClipboardAction (Copy|Cut), ClipboardEntry, ClipboardEntryId
+    - `device.rs`: DeviceId, DeviceKind (6 types), Presence (7 states), TrustLevel (3 states), NetworkKind (4 types)
+    - `provider.rs`: ProviderId, ConnectorCapabilities (11 flags), ConnectorStatus (4 states)
+    - `notification.rs`: NotificationId, Priority (4 levels), NotificationTarget (AllDevices|Device)
+    - `session.rs`: SessionId
+    - `permission.rs`: DevicePermissions (13 capabilities with sensible defaults)
+    - `common.rs`: AccountId, OperationResult, SearchSnapshot
+  - Updated all 6 service trait modules to use canonical model names (Entry, Root, EntryMetadata, TransferSnapshot, EntryRef, ClipboardAction)
+  - Removed duplicate `ConnectorCapabilities`/`ConnectorStatus` from providers module — now imported from models
+  - Removed duplicate `SearchProgress` from search module — replaced by `SearchSnapshot` from models
+  - Added `storageos-core` as path dependency to desktop Cargo.toml
+  - Replaced desktop's `OperationResult` definition with re-export from `storageos_core::models::OperationResult`
+  - Added `From<Entry> for DirectoryEntry` and reverse conversion in `directory.rs` (TS-compat adapter)
+  - Added `From<EntryMetadata> for FileAttributes` and reverse conversion in `file_attributes.rs` (TS-compat adapter)
+  - Added `From<LocalDrive> for Root` conversion in `drives.rs` (TS-compat adapter)
+  - Both crates compile clean. Desktop app unchanged in behavior — all TypeScript-facing JSON shapes preserved.
+- **StorageOS domain model design (A-002.5)**: Canonical DDD domain model for all StorageOS components
+  - `docs/architecture/DomainModel.md` — 11-part design document defining the shared vocabulary
+  - Part 1 — Core domain objects: Account, Device, Provider, Root, Entry, Transfer, Clipboard, Notification, Session, Permission with ownership relationships
+  - Part 2 — Complete hierarchy: Account → Device → Provider → Root → Entry with cross-cutting concerns (Transfer, Clipboard, Notification)
+  - Part 3 — Composition over inheritance: EntryKind and RootKind discriminators, flat EntryMetadata with provider-specific optional fields and custom escape hatch
+  - Part 4 — Naming review: DirectoryEntry → Entry, LocalDrive → Root, DriveType → RootKind, FileAttributes → EntryMetadata, ClipboardItem → EntryRef, TransferProgress → TransferSnapshot, ClipboardOperation → ClipboardAction. Kept: Account, Device, Provider, Transfer, TransferStatus, TransferType, OperationResult, Notification, CoreError
+  - Part 5 — Cross-provider compatibility verified for 12 providers (Windows/Linux/macOS/Android/Google Drive/OneDrive/Dropbox/SharePoint/S3/SMB/FTP/NAS). S3 folder simulation, SharePoint library mapping, Linux mount points, Android scoped storage documented
+  - Part 6 — 30+ canonical events: `{domain}.{action}` pattern (entry.*, transfer.*, provider.*, device.*, clipboard.*, search.*, notification.*) with typed payloads
+  - Part 7 — Strongly typed identifiers: UUID-based (Account, Device, Transfer, ClipboardEntry, Notification, Session) and String-based (Root, Entry — preserves provider-native IDs). EntryRef as universal cross-boundary pointer
+  - Part 8 — Relationship diagrams with cardinality (Account 1→N Device, Device 0→N Provider, Provider 1→N Root, Root 0→N Entry)
+  - Part 9 — Future proofing validated against 10 features (cloud sync, offline cache, version history, file sharing, collaboration, AI, virtual providers, encryption, backup, snapshots) — all additive, no structural changes
+  - Part 10 — Migration strategy: every existing Rust and TypeScript model mapped to domain model names, rename sequencing aligned with storageos-core migration phases
+  - Part 11 — Architecture validation passed: provider-agnostic, device-agnostic, UI-agnostic, platform-agnostic, transport-agnostic, future cloud and enterprise support confirmed
+  - Updated Agent.md glossary with Entry, EntryRef, Root, Session terms and added DomainModel.md cross-reference
+- **storageos-core crate foundation (A-002)**: Created shared Rust crate at `crates/storageos-core/`
+  - 10 modules: errors, models, filesystem, transfer, search, clipboard, providers, events, config, utils
+  - Each module has `mod.rs` with documentation of purpose, future ownership (which existing code migrates), and trait definitions
+  - Public API traits: `FileSystemService` (8 methods), `TransferService` (7 methods), `SearchService` (1 method), `ClipboardService` (7 methods), `StorageConnector` (8 methods)
+  - Shared models: `DirectoryEntry`, `LocalDrive`, `DriveType`, `FileAttributes`, `OperationResult`, `TransferProgress`, `TransferStatus`, `TransferType`, `ClipboardItem`, `ClipboardOperation`
+  - `CoreError` with 10 error kinds + `CoreResult<T>` alias — replaces `BridgeError` at the core level
+  - `CoreEvent` enum for decoupled internal pub/sub (transfer progress, file changes, provider status)
+  - `ConnectorCapabilities` (11 flags) and `ConnectorStatus` for provider abstraction
+  - `AppConfig` with port, log level, data/log directory paths
+  - Utility functions: `is_valid_filename()`, `parent_path()`, `INVALID_FILENAME_CHARS`
+  - Dependency rules documented with directed graph — no circular dependencies allowed
+  - README.md: complete module ownership map, dependency rules diagram, public API surface, 9-phase migration plan (create → models → utils → errors → filesystem → transfers → search → desktop integration → Agent integration)
+  - External dependencies: serde 1, thiserror 2 only — zero Tauri/platform dependencies
+  - Compiles clean (`cargo check` passes). Desktop app unchanged and still compiling.
+
+### Sprint 04 — Explorer Polish
+
+#### 2026-07-01
+
+- **Hidden files & file attributes (EXP-005)**: Complete hidden/readonly attribute management
+  - Rust `services/file_attributes.rs`: get_attributes, set_hidden, set_readonly via Windows GetFileAttributesW/SetFileAttributesW
+  - FileAttributes struct: hidden, readonly, system, archive (all bool) with cross-platform stubs
+  - Rust commands `get_attributes`, `set_hidden`, `set_readonly` via `commands/file_attributes.rs`
+  - TypeScript bridge: FileAttributes type, getAttributes(), setHidden(), setReadonly() IPC commands
+  - Explorer store: showHiddenItems + showFileExtensions persisted to localStorage, toggles, Ctrl+H shortcut
+  - View dropdown: "Hidden items" and "File name extensions" checkboxes
+  - FileArea: filters hidden entries when showHiddenItems is false; strips extensions when showFileExtensions is false
+  - Context menu: Hide/Unhide and Set read-only/Remove read-only items (multi-select aware)
+  - Properties panel: full implementation with file info (size, dates), attribute chips (Hidden, Read Only, System, Archive), file path
+  - Visual indicators: hidden files at 50% opacity (all views), lock badge SVG overlay on read-only files (all 3 view modes)
+  - 17 IPC commands total (+get_attributes, +set_hidden, +set_readonly)
+- **Keyboard shortcut fix**: Fixed HMR-safe event handler duplication for Ctrl+C/X/V, smarter text input guard, same-directory paste notification
+- **Agent architecture (A-001)**: Complete architecture document for the StorageOS Agent
+  - `docs/architecture/Agent.md` — 23-section specification covering purpose, responsibilities, technology (Rust/Axum/SQLite/tantivy), process architecture, lifecycle (startup/shutdown/recovery), service mode vs tray mode, connector layer (StorageConnector trait + plugin system), transfer engine (cross-provider streaming, persistence, conflict resolution), search & indexing (tantivy + future semantic search), sync engine (one-way/two-way/mirror), authentication (local API key + OAuth + future mTLS device pairing), event bus, REST+WebSocket API design, logging/monitoring, plugin SDK, security model, migration path from current Tauri IPC architecture, and non-functional targets
+- **Agent architecture review & revision (A-001R)**: Senior architecture review, complete rewrite of Agent.md to v2.0
+  - Fundamental perspective shift: Agent as the product of a distributed personal storage platform, not a file manager helper process
+  - 14 new/expanded sections: Account Architecture, Device Registry (20+ fields), Pairing (ECDH + QR + certificates, no passwords), Discovery (4-layer: cache → mDNS → relay → manual), Communication (Named Pipes/UDS/TCP+TLS/QUIC, MessagePack protocol), StorageOS SDK (Rust core with FFI), Permissions (13 per-device capabilities → future RBAC), Presence (7 states + heartbeat), Clipboard (Agent-owned, cross-device sync), Notifications (first-class with categories/priorities/OS-native), Execution Mode (background user process, not Windows Service), Search (SQLite FTS5 for MVP, tantivy deferred), Plugin Architecture (deferred to Phase 6), Evolution Roadmap (7 phases)
+  - Section 29: "Architectural Changes from Revision 1" documenting 14 major changes with rationale
+  - Challenged: Windows Service (wrong for MVP), tantivy (premature), plugin system (premature), HTTP-only comms (inefficient for local IPC), no account/pairing/presence/permissions (cannot support multi-device)
+
 ### Sprint 00 — Project Setup
 
 #### 2026-06-30

@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Bash",
+      "PowerShell",
       "Bash(for dir in docs/vision docs/prd docs/architecture docs/api docs/database docs/ui apps/desktop apps/web apps/mobile services/backend services/auth services/search services/sync services/notifications agent connectors/local connectors/google-drive connectors/onedrive connectors/sharepoint shared infrastructure)",
       "Bash(do touch \"$dir/.gitkeep\")",
       "Bash(done)",
@@ -64,7 +66,8 @@
       "Bash(\"$USERPROFILE/.cargo/bin/rustup.exe\" toolchain uninstall stable)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo update cookie --breaking 2>&1)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo build 2>&1 | Select-String \"error\\\\[\")",
-      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npx tauri dev 2>&1)"
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npx tauri dev 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npm run tauri dev 2>&1)"
     ]
   }
 }

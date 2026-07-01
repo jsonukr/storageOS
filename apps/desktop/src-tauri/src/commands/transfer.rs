@@ -27,15 +27,15 @@ pub async fn start_transfer(
 
 #[tauri::command]
 pub async fn pause_transfer(transfer_id: String) -> Result<bool, BridgeError> {
-    Ok(transfer_worker::set_signal(&transfer_id, 1))
+    Ok(transfer_worker::set_signal(&transfer_id, transfer_worker::SIGNAL_PAUSED))
 }
 
 #[tauri::command]
 pub async fn resume_transfer(transfer_id: String) -> Result<bool, BridgeError> {
-    Ok(transfer_worker::set_signal(&transfer_id, 0))
+    Ok(transfer_worker::set_signal(&transfer_id, transfer_worker::SIGNAL_RUNNING))
 }
 
 #[tauri::command]
 pub async fn cancel_transfer(transfer_id: String) -> Result<bool, BridgeError> {
-    Ok(transfer_worker::set_signal(&transfer_id, 2))
+    Ok(transfer_worker::set_signal(&transfer_id, transfer_worker::SIGNAL_CANCEL))
 }

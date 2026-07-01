@@ -7,6 +7,7 @@ pub mod health;
 pub mod version;
 pub mod platform;
 pub mod app_directories;
+pub mod file_attributes;
 pub mod file_operations;
 pub mod list_directory;
 pub mod list_drives;

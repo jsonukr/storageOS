@@ -1,15 +1,38 @@
 import { create } from "zustand";
-import type { DirectoryEntry, SearchProgressPayload } from "@/lib/tauri";
-import { onBridgeEvent, startTransfer } from "@/lib/tauri";
+import type { DirectoryEntry, FileAttributes, SearchProgressPayload } from "@/lib/tauri";
+import { onBridgeEvent, startTransfer, setHidden, setReadonly, getAttributes } from "@/lib/tauri";
 import { ExplorerService } from "@/services/ExplorerService";
+import { ExplorerSortService } from "@/services/ExplorerSortService";
+import type { SortField, SortDirection, SortConfig } from "@/services/ExplorerSortService";
 import { ClipboardService } from "@/services/clipboard";
 import { TransferService } from "@/services/transfer";
 
-type ViewMode = "grid" | "list" | "details";
+type ViewMode = "extra_large" | "large" | "medium" | "small" | "list" | "details";
+
+const VIEW_STORAGE_KEY = "storageos:viewMode";
+const HIDDEN_ITEMS_KEY = "storageos:showHiddenItems";
+const FILE_EXT_KEY = "storageos:showFileExtensions";
+
+const initialSortConfig = ExplorerSortService.loadConfig();
+const initialShowHiddenItems = localStorage.getItem(HIDDEN_ITEMS_KEY) === "true";
+const initialShowFileExtensions = localStorage.getItem(FILE_EXT_KEY) !== "false";
+const initialViewMode: ViewMode = (() => {
+  const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+  if (saved && ["extra_large", "large", "medium", "small", "list", "details"].includes(saved)) return saved as ViewMode;
+  return "details";
+})();
 
 interface ExplorerState {
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
+
+  sortField: SortField;
+  sortDirection: SortDirection;
+  foldersFirst: boolean;
+  setSortField: (field: SortField) => void;
+  setSortDirection: (dir: SortDirection) => void;
+  toggleFoldersFirst: () => void;
+
   navPanelWidth: number;
   setNavPanelWidth: (width: number) => void;
   propertiesOpen: boolean;
@@ -82,6 +105,16 @@ interface ExplorerState {
   } | null;
   resolvePasteConflict: (resolution: "replace" | "keep_both" | "cancel") => void;
 
+  showHiddenItems: boolean;
+  toggleShowHiddenItems: () => void;
+  showFileExtensions: boolean;
+  toggleShowFileExtensions: () => void;
+
+  setEntryHidden: (entries: DirectoryEntry[], hidden: boolean) => Promise<void>;
+  setEntryReadonly: (entries: DirectoryEntry[], readonly: boolean) => Promise<void>;
+  selectedAttributes: FileAttributes | null;
+  loadSelectedAttributes: () => void;
+
   notification: string | null;
   clearNotification: () => void;
 
@@ -100,11 +133,16 @@ interface ExplorerState {
 let searchGeneration = 0;
 let searchStartTime = 0;
 
+function getSortConfig(): SortConfig {
+  const s = useExplorerStore.getState();
+  return { field: s.sortField, direction: s.sortDirection, foldersFirst: s.foldersFirst };
+}
+
 function loadDirectory(path: string, set: (partial: Partial<ExplorerState>) => void) {
   searchGeneration++;
   set({ currentPath: path, loading: true, error: null, entries: [], selectedEntries: [], searchQuery: "", searchResults: null, searchLoading: false, searchError: null, searchProgress: null, searchDurationMs: null });
   ExplorerService.listDirectory(path)
-    .then((entries) => set({ entries, loading: false }))
+    .then((entries) => set({ entries: ExplorerSortService.sort(entries, getSortConfig()), loading: false }))
     .catch((err) =>
       set({
         loading: false,
@@ -126,8 +164,41 @@ function getParentPath(path: string): string | null {
 }
 
 export const useExplorerStore = create<ExplorerState>((set, get) => ({
-  viewMode: "details",
-  setViewMode: (mode) => set({ viewMode: mode }),
+  viewMode: initialViewMode,
+  setViewMode: (mode) => {
+    localStorage.setItem(VIEW_STORAGE_KEY, mode);
+    set({ viewMode: mode });
+  },
+
+  sortField: initialSortConfig.field,
+  sortDirection: initialSortConfig.direction,
+  foldersFirst: initialSortConfig.foldersFirst,
+  setSortField: (field) => {
+    const { sortDirection, foldersFirst, entries, searchResults } = get();
+    const config: SortConfig = { field, direction: sortDirection, foldersFirst };
+    ExplorerSortService.saveConfig(config);
+    const sorted = ExplorerSortService.sort(entries, config);
+    const sortedSearch = searchResults ? ExplorerSortService.sort(searchResults, config) : null;
+    set({ sortField: field, entries: sorted, searchResults: sortedSearch, selectedEntries: [] });
+  },
+  setSortDirection: (dir) => {
+    const { sortField, foldersFirst, entries, searchResults } = get();
+    const config: SortConfig = { field: sortField, direction: dir, foldersFirst };
+    ExplorerSortService.saveConfig(config);
+    const sorted = ExplorerSortService.sort(entries, config);
+    const sortedSearch = searchResults ? ExplorerSortService.sort(searchResults, config) : null;
+    set({ sortDirection: dir, entries: sorted, searchResults: sortedSearch, selectedEntries: [] });
+  },
+  toggleFoldersFirst: () => {
+    const { sortField, sortDirection, foldersFirst, entries, searchResults } = get();
+    const newVal = !foldersFirst;
+    const config: SortConfig = { field: sortField, direction: sortDirection, foldersFirst: newVal };
+    ExplorerSortService.saveConfig(config);
+    const sorted = ExplorerSortService.sort(entries, config);
+    const sortedSearch = searchResults ? ExplorerSortService.sort(searchResults, config) : null;
+    set({ foldersFirst: newVal, entries: sorted, searchResults: sortedSearch, selectedEntries: [] });
+  },
+
   navPanelWidth: 240,
   setNavPanelWidth: (width) => set({ navPanelWidth: width }),
   propertiesOpen: false,
@@ -335,7 +406,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       .then((results) => {
         if (gen !== searchGeneration) return;
         const duration = performance.now() - searchStartTime;
-        set({ searchResults: results, searchLoading: false, selectedEntries: [], searchDurationMs: duration, searchProgress: null });
+        const sorted = ExplorerSortService.sort(results, getSortConfig());
+        set({ searchResults: sorted, searchLoading: false, selectedEntries: [], searchDurationMs: duration, searchProgress: null });
       })
       .catch((err) => {
         if (gen !== searchGeneration) return;
@@ -404,12 +476,21 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     const firstItemOverwrite = overwrite;
     const firstItemNewName = newName;
     let queued = 0;
+    let skippedSameDir = 0;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const ow = i === 0 ? firstItemOverwrite : undefined;
       const nn = i === 0 ? firstItemNewName : undefined;
       const fileName = nn ?? item.path.split(/[\\/]/).pop() ?? "file";
+
+      const itemParent = item.path.replace(/[\\/][^\\/]+$/, "");
+      const normalizedParent = itemParent.replace(/[\\/]+$/, "").toLowerCase();
+      const normalizedDest = currentPath.replace(/[\\/]+$/, "").toLowerCase();
+      if (isCut && !nn && normalizedParent === normalizedDest) {
+        skippedSameDir++;
+        continue;
+      }
 
       if (!ow && !nn && existingNames.has(fileName)) {
         set({
@@ -431,6 +512,12 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
         TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
       );
       queued++;
+    }
+
+    if (skippedSameDir > 0 && queued === 0) {
+      if (isCut) ClipboardService.clear();
+      set({ notification: skippedSameDir === 1 ? "The item is already in this location" : `${skippedSameDir} items are already in this location` });
+      return;
     }
 
     if (queued > 0) {
@@ -476,6 +563,47 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       get().pasteEntries(false, candidate);
       return;
     }
+  },
+
+  showHiddenItems: initialShowHiddenItems,
+  toggleShowHiddenItems: () => {
+    const next = !get().showHiddenItems;
+    localStorage.setItem(HIDDEN_ITEMS_KEY, String(next));
+    set({ showHiddenItems: next });
+  },
+  showFileExtensions: initialShowFileExtensions,
+  toggleShowFileExtensions: () => {
+    const next = !get().showFileExtensions;
+    localStorage.setItem(FILE_EXT_KEY, String(next));
+    set({ showFileExtensions: next });
+  },
+
+  setEntryHidden: async (entries, hidden) => {
+    for (const entry of entries) {
+      try {
+        await setHidden(entry.full_path, hidden);
+      } catch { /* skip failures */ }
+    }
+    get().refresh();
+  },
+  setEntryReadonly: async (entries, readonly) => {
+    for (const entry of entries) {
+      try {
+        await setReadonly(entry.full_path, readonly);
+      } catch { /* skip failures */ }
+    }
+    get().refresh();
+  },
+  selectedAttributes: null,
+  loadSelectedAttributes: () => {
+    const { selectedEntries } = get();
+    if (selectedEntries.length !== 1) {
+      set({ selectedAttributes: null });
+      return;
+    }
+    getAttributes(selectedEntries[0].full_path)
+      .then((attrs) => set({ selectedAttributes: attrs }))
+      .catch(() => set({ selectedAttributes: null }));
   },
 
   notification: null,
@@ -548,23 +676,35 @@ onBridgeEvent("transfer:progress", (payload) => {
   }
 });
 
-document.addEventListener("keydown", (e: KeyboardEvent) => {
-  const inTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+if ((window as any).__storageos_keydown) {
+  document.removeEventListener("keydown", (window as any).__storageos_keydown);
+}
+(window as any).__storageos_keydown = function _explorerKeydown(e: KeyboardEvent) {
   const state = useExplorerStore.getState();
+  const el = e.target;
+  const isTextInput = el instanceof HTMLInputElement && el.type !== "checkbox" && el.type !== "radio" || el instanceof HTMLTextAreaElement;
 
   if (e.key === "Delete") {
-    if (inTextInput && (e.target as HTMLInputElement).value.length > 0) return;
+    if (isTextInput && (el as HTMLInputElement).value.length > 0) return;
     if (state.selectedEntries.length > 0 && state.deleteTargets.length === 0) {
       e.preventDefault();
-      if (inTextInput) (e.target as HTMLElement).blur();
+      if (isTextInput) (el as HTMLElement).blur();
       state.confirmDelete(state.selectedEntries);
     }
     return;
   }
 
-  if (inTextInput) return;
+  if (!e.ctrlKey && !e.metaKey) return;
 
-  if (e.ctrlKey && e.key === "a") {
+  if (e.key === "h") {
+    if (isTextInput) return;
+    e.preventDefault();
+    state.toggleShowHiddenItems();
+    return;
+  }
+
+  if (e.key === "a") {
+    if (isTextInput) return;
     e.preventDefault();
     state.selectEntry(null);
     const list = state.searchResults ?? state.entries;
@@ -574,23 +714,27 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
     return;
   }
 
-  if (!e.ctrlKey && !e.metaKey) return;
-  if (e.key === "c") {
+  if (e.key === "c" || e.key === "x") {
+    if (isTextInput) {
+      const inp = el as HTMLInputElement;
+      if (inp.selectionStart !== inp.selectionEnd) return;
+    }
     if (state.selectedEntries.length > 0) {
       e.preventDefault();
-      state.copyEntries(state.selectedEntries);
+      if (e.key === "c") state.copyEntries(state.selectedEntries);
+      else state.cutEntries(state.selectedEntries);
     }
-  } else if (e.key === "x") {
-    if (state.selectedEntries.length > 0) {
-      e.preventDefault();
-      state.cutEntries(state.selectedEntries);
-    }
-  } else if (e.key === "v") {
-    if (state.currentPath) {
+    return;
+  }
+
+  if (e.key === "v") {
+    if (isTextInput) return;
+    if (state.currentPath && ClipboardService.hasItems()) {
       e.preventDefault();
       state.pasteEntries();
     }
   }
-});
+};
+document.addEventListener("keydown", (window as any).__storageos_keydown);
 
 export { getParentPath };

@@ -1,11 +1,13 @@
-//! Directory listing for local filesystems.
+//! Directory listing adapter.
+//!
+//! `DirectoryEntry` serializes with the field names the TypeScript
+//! frontend expects (is_directory, full_path, last_modified, date_created).
+//! The business logic lives in `storageos_core::filesystem::list_directory`.
 
 use serde::Serialize;
-use std::fs;
-use std::path::Path;
-use std::time::UNIX_EPOCH;
 
 use crate::errors::BridgeError;
+use storageos_core::models::{Entry, EntryId, EntryKind, EntryMetadata};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DirectoryEntry {
@@ -14,107 +16,49 @@ pub struct DirectoryEntry {
     pub is_directory: bool,
     pub size: u64,
     pub last_modified: u64,
+    pub date_created: u64,
     pub hidden: bool,
     pub readonly: bool,
     pub extension: String,
 }
 
-pub fn list_directory(path: &str) -> Result<Vec<DirectoryEntry>, BridgeError> {
-    let dir = Path::new(path);
-
-    if !dir.exists() {
-        return Err(BridgeError::not_found(format!(
-            "Directory not found: {path}"
-        )));
-    }
-
-    if !dir.is_dir() {
-        return Err(BridgeError::invalid_argument(format!(
-            "Not a directory: {path}"
-        )));
-    }
-
-    let read_dir = fs::read_dir(dir).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            BridgeError::permission_denied(format!("Access denied: {path}"))
-        } else {
-            BridgeError::from(e)
+impl From<Entry> for DirectoryEntry {
+    fn from(e: Entry) -> Self {
+        Self {
+            name: e.name,
+            full_path: e.path,
+            is_directory: matches!(e.kind, EntryKind::Folder),
+            size: e.size,
+            last_modified: e.modified_at.unwrap_or(0),
+            date_created: e.created_at.unwrap_or(0),
+            hidden: e.metadata.hidden.unwrap_or(false),
+            readonly: e.metadata.readonly.unwrap_or(false),
+            extension: e.metadata.extension.unwrap_or_default(),
         }
-    })?;
-
-    let mut entries = Vec::new();
-
-    for result in read_dir {
-        let entry = match result {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let full_path = entry.path().to_string_lossy().into_owned();
-        let is_directory = metadata.is_dir();
-        let size = if is_directory { 0 } else { metadata.len() };
-
-        let last_modified = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let hidden = is_hidden(&entry);
-        let readonly = metadata.permissions().readonly();
-
-        let extension = if is_directory {
-            String::new()
-        } else {
-            entry
-                .path()
-                .extension()
-                .map(|e| e.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        };
-
-        entries.push(DirectoryEntry {
-            name,
-            full_path,
-            is_directory,
-            size,
-            last_modified,
-            hidden,
-            readonly,
-            extension,
-        });
     }
-
-    entries.sort_by(|a, b| {
-        b.is_directory
-            .cmp(&a.is_directory)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-
-    Ok(entries)
 }
 
-#[cfg(target_os = "windows")]
-fn is_hidden(entry: &fs::DirEntry) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-    entry
-        .metadata()
-        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
-        .unwrap_or(false)
+impl From<DirectoryEntry> for Entry {
+    fn from(d: DirectoryEntry) -> Self {
+        Self {
+            id: EntryId::new(&d.full_path),
+            name: d.name,
+            path: d.full_path,
+            kind: if d.is_directory { EntryKind::Folder } else { EntryKind::File },
+            size: d.size,
+            created_at: Some(d.date_created),
+            modified_at: Some(d.last_modified),
+            metadata: EntryMetadata {
+                hidden: Some(d.hidden),
+                readonly: Some(d.readonly),
+                extension: if d.extension.is_empty() { None } else { Some(d.extension) },
+                ..Default::default()
+            },
+        }
+    }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn is_hidden(entry: &fs::DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_string_lossy()
-        .starts_with('.')
+pub fn list_directory(path: &str) -> Result<Vec<DirectoryEntry>, BridgeError> {
+    let entries = storageos_core::filesystem::list_directory(path)?;
+    Ok(entries.into_iter().map(DirectoryEntry::from).collect())
 }

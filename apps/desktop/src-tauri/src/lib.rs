@@ -27,6 +27,9 @@ pub fn run() {
             commands::transfer::pause_transfer,
             commands::transfer::resume_transfer,
             commands::transfer::cancel_transfer,
+            commands::file_attributes::get_attributes,
+            commands::file_attributes::set_hidden,
+            commands::file_attributes::set_readonly,
         ])
         .run(tauri::generate_context!())
         .expect("error while running StorageOS");

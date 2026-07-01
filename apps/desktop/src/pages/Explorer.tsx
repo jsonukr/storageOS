@@ -5,6 +5,7 @@ import { NavigationPanel } from "../components/NavigationPanel";
 import { PropertiesPanel } from "../components/PropertiesPanel";
 import { ResizeHandle } from "../components/ResizeHandle";
 import type { DirectoryEntry } from "@/lib/tauri";
+import type { SortField } from "@/services/ExplorerSortService";
 
 
 const NAV_MIN = 180;
@@ -14,7 +15,6 @@ const PROP_MAX = 400;
 
 export default function Explorer() {
   const viewMode = useExplorerStore((s) => s.viewMode);
-  const setViewMode = useExplorerStore((s) => s.setViewMode);
   const navPanelWidth = useExplorerStore((s) => s.navPanelWidth);
   const setNavPanelWidth = useExplorerStore((s) => s.setNavPanelWidth);
   const propertiesOpen = useExplorerStore((s) => s.propertiesOpen);
@@ -103,43 +103,14 @@ export default function Explorer() {
 
         <ToolbarDivider />
 
-        {/* View */}
-        <div className="flex items-center rounded-md border border-border overflow-hidden">
-          <ViewToggle active={viewMode === "grid"} label="Grid view" onClick={() => setViewMode("grid")}>
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <rect x="1.5" y="1.5" width="4" height="4" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
-              <rect x="7.5" y="1.5" width="4" height="4" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
-              <rect x="1.5" y="7.5" width="4" height="4" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
-              <rect x="7.5" y="7.5" width="4" height="4" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
-            </svg>
-          </ViewToggle>
-          <ViewToggle active={viewMode === "list"} label="List view" onClick={() => setViewMode("list")}>
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <path d="M1.5 3.5h10M1.5 6.5h10M1.5 9.5h10" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-            </svg>
-          </ViewToggle>
-          <ViewToggle active={viewMode === "details"} label="Details view" onClick={() => setViewMode("details")}>
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <path d="M1.5 3.5h4M1.5 6.5h4M1.5 9.5h4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-              <path d="M7.5 3.5h4M7.5 6.5h4M7.5 9.5h4" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" opacity="0.5" />
-            </svg>
-          </ViewToggle>
-        </div>
+        {/* Sort & View Dropdowns */}
+        <SortDropdown />
+        <ViewDropdown />
 
         <ToolbarDivider />
 
         {/* More */}
         <div className="flex items-center gap-0.5">
-          <ToolbarButton label="Sort">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M2 4h10M4 7h6M6 10h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </ToolbarButton>
-          <ToolbarButton label="Filter">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M1.5 2.5h11l-4 5v3.5l-3 1.5V7.5l-4-5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-            </svg>
-          </ToolbarButton>
           <ToolbarButton label="Properties" onClick={toggleProperties}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" />
@@ -267,7 +238,22 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const searchResults = useExplorerStore((s) => s.searchResults);
   const searchError = useExplorerStore((s) => s.searchError);
 
+  const showHidden = useExplorerStore((s) => s.showHiddenItems);
   const isSearchActive = searchQuery.length > 0;
+
+  useEffect(() => {
+    if (currentPath && areaRef.current) areaRef.current.focus();
+  }, [currentPath]);
+
+  const filterHidden = (items: DirectoryEntry[]) =>
+    showHidden ? items : items.filter((e) => !e.hidden);
+
+  const renderView = (items: DirectoryEntry[]) => {
+    const filtered = filterHidden(items);
+    if (viewMode === "details") return <DetailsView entries={filtered} areaRef={areaRef} />;
+    if (viewMode === "list") return <ListView entries={filtered} areaRef={areaRef} />;
+    return <GridView entries={filtered} viewMode={viewMode} areaRef={areaRef} />;
+  };
 
   const handleBackgroundContext = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -283,17 +269,11 @@ function FileArea({ viewMode }: { viewMode: string }) {
     if (isSearchActive) {
       if (searchError) return <ErrorState message={searchError} />;
       if (searchResults !== null && searchResults.length === 0) return <NoResultsState query={searchQuery} />;
-      if (searchResults !== null) {
-        return viewMode === "details"
-          ? <DetailsView entries={searchResults} areaRef={areaRef} />
-          : <GridView entries={searchResults} areaRef={areaRef} />;
-      }
+      if (searchResults !== null) return renderView(searchResults);
     }
 
     if (entries.length === 0) return <EmptyState />;
-    return viewMode === "details"
-      ? <DetailsView entries={entries} areaRef={areaRef} />
-      : <GridView entries={entries} areaRef={areaRef} />;
+    return renderView(entries);
   };
 
   return (
@@ -304,14 +284,7 @@ function FileArea({ viewMode }: { viewMode: string }) {
       onClick={() => { selectEntry(null); hideContextMenu(); }}
       onContextMenu={handleBackgroundContext}
     >
-      {viewMode === "details" && (
-        <div className="flex items-center h-7 border-b border-border-subtle px-3 text-[11px] font-medium text-text-tertiary select-none bg-surface-secondary">
-          <span className="flex-1 min-w-0">Name</span>
-          <span className="w-32 text-right shrink-0">Date Modified</span>
-          <span className="w-20 text-right shrink-0">Type</span>
-          <span className="w-20 text-right shrink-0">Size</span>
-        </div>
-      )}
+      {viewMode === "details" && <DetailsHeader />}
 
       <div className="flex-1 overflow-auto">
         {renderContent()}
@@ -413,11 +386,61 @@ function NoResultsState({ query }: { query: string }) {
   );
 }
 
+function SortArrow({ field }: { field: SortField }) {
+  const sortField = useExplorerStore((s) => s.sortField);
+  const sortDirection = useExplorerStore((s) => s.sortDirection);
+  if (sortField !== field) return null;
+  return (
+    <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className="ml-0.5 shrink-0">
+      {sortDirection === "asc" ? (
+        <path d="M4 2L1.5 5.5h5L4 2z" fill="currentColor" />
+      ) : (
+        <path d="M4 6L1.5 2.5h5L4 6z" fill="currentColor" />
+      )}
+    </svg>
+  );
+}
+
+function DetailsHeader() {
+  const setSortField = useExplorerStore((s) => s.setSortField);
+  const setSortDirection = useExplorerStore((s) => s.setSortDirection);
+  const sortField = useExplorerStore((s) => s.sortField);
+  const sortDirection = useExplorerStore((s) => s.sortDirection);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+    }
+  };
+
+  const colClass = "flex items-center gap-0.5 cursor-pointer hover:text-text-secondary transition-colors";
+
+  return (
+    <div className="flex items-center h-7 border-b border-border-subtle px-3 text-[11px] font-medium text-text-tertiary select-none bg-surface-secondary">
+      <span className={`flex-1 min-w-0 ${colClass}`} onClick={(e) => { e.stopPropagation(); handleSort("name"); }}>
+        Name <SortArrow field="name" />
+      </span>
+      <span className={`w-32 justify-end shrink-0 ${colClass}`} onClick={(e) => { e.stopPropagation(); handleSort("date_modified"); }}>
+        Date Modified <SortArrow field="date_modified" />
+      </span>
+      <span className={`w-20 justify-end shrink-0 ${colClass}`} onClick={(e) => { e.stopPropagation(); handleSort("type"); }}>
+        Type <SortArrow field="type" />
+      </span>
+      <span className={`w-20 justify-end shrink-0 ${colClass}`} onClick={(e) => { e.stopPropagation(); handleSort("size"); }}>
+        Size <SortArrow field="size" />
+      </span>
+    </div>
+  );
+}
+
 function DetailsView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: React.RefObject<HTMLDivElement | null> }) {
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const showExt = useExplorerStore((s) => s.showFileExtensions);
   const selectedPaths = new Set(selectedEntries.map((e) => e.full_path));
 
   return (
@@ -437,9 +460,12 @@ function DetailsView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef:
             }`}
           >
             <span className="flex items-center gap-1.5 flex-1 min-w-0">
-              <FileIcon entry={entry} />
+              <span className="relative shrink-0">
+                <FileIcon entry={entry} />
+                {entry.readonly && <LockBadge size={8} />}
+              </span>
               <span className={`truncate ${entry.hidden ? "opacity-50" : ""}`}>
-                {entry.name}
+                {entry.is_directory || showExt ? entry.name : stripExtension(entry.name, entry.extension)}
               </span>
             </span>
             <span className="w-32 text-right text-text-tertiary shrink-0">
@@ -458,15 +484,24 @@ function DetailsView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef:
   );
 }
 
-function GridView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: React.RefObject<HTMLDivElement | null> }) {
+const GRID_SIZES = {
+  extra_large: { min: 180, icon: 96, text: 12, gap: 4, pad: 4 },
+  large:       { min: 130, icon: 64, text: 12, gap: 2, pad: 3 },
+  medium:      { min: 90,  icon: 32, text: 11, gap: 1, pad: 2 },
+  small:       { min: 70,  icon: 16, text: 11, gap: 1, pad: 1.5 },
+} as const;
+
+function GridView({ entries, viewMode, areaRef }: { entries: DirectoryEntry[]; viewMode: string; areaRef: React.RefObject<HTMLDivElement | null> }) {
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const showExt = useExplorerStore((s) => s.showFileExtensions);
   const selectedPaths = new Set(selectedEntries.map((e) => e.full_path));
+  const sz = GRID_SIZES[viewMode as keyof typeof GRID_SIZES] ?? GRID_SIZES.medium;
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-1 p-2">
+    <div className="gap-1 p-2" style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${sz.min}px, 1fr))`, gap: `${sz.gap * 4}px` }}>
       {entries.map((entry) => {
         const isSelected = selectedPaths.has(entry.full_path);
         return (
@@ -475,17 +510,21 @@ function GridView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: Re
             onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); areaRef.current?.focus(); }}
             onDoubleClick={() => openEntry(entry)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
-            className={`flex flex-col items-center gap-1 p-2 rounded-md transition-colors cursor-default select-none ${
+            className={`flex flex-col items-center gap-1 rounded-md transition-colors cursor-default select-none ${
               entry.hidden ? "opacity-50" : ""
             } ${
               isSelected
                 ? "bg-accent/10 ring-1 ring-accent/30"
                 : "hover:bg-surface-hover"
             }`}
+            style={{ padding: `${sz.pad * 4}px` }}
           >
-            <GridFileIcon entry={entry} />
-            <span className="text-[11px] text-text-primary text-center leading-tight line-clamp-2 w-full break-all">
-              {entry.name}
+            <span className="relative">
+              <GridFileIcon entry={entry} size={sz.icon} />
+              {entry.readonly && <LockBadge size={Math.max(10, sz.icon * 0.25)} />}
+            </span>
+            <span className="text-text-primary text-center leading-tight line-clamp-2 w-full break-all" style={{ fontSize: `${sz.text}px` }}>
+              {entry.is_directory || showExt ? entry.name : stripExtension(entry.name, entry.extension)}
             </span>
           </div>
         );
@@ -498,7 +537,7 @@ function FileIcon({ entry }: { entry: DirectoryEntry }) {
   if (entry.is_directory) {
     return (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0 text-warning">
-        <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" fill="currentColor" opacity="0.2" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
+        <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" fill="currentColor" opacity="0.55" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
       </svg>
     );
   }
@@ -510,20 +549,75 @@ function FileIcon({ entry }: { entry: DirectoryEntry }) {
   );
 }
 
-function GridFileIcon({ entry }: { entry: DirectoryEntry }) {
+function LockBadge({ size = 8 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 10 10"
+      fill="none"
+      className="absolute -bottom-0.5 -right-0.5 text-text-tertiary drop-shadow-sm"
+    >
+      <rect x="1.5" y="4.5" width="7" height="5" rx="0.8" fill="currentColor" opacity="0.85" />
+      <path d="M3.2 4.5V3a1.8 1.8 0 013.6 0v1.5" stroke="currentColor" strokeWidth="1" fill="none" />
+    </svg>
+  );
+}
+
+function ListView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: React.RefObject<HTMLDivElement | null> }) {
+  const selectedEntries = useExplorerStore((s) => s.selectedEntries);
+  const selectEntry = useExplorerStore((s) => s.selectEntry);
+  const openEntry = useExplorerStore((s) => s.openEntry);
+  const showContextMenu = useExplorerStore((s) => s.showContextMenu);
+  const showExt = useExplorerStore((s) => s.showFileExtensions);
+  const selectedPaths = new Set(selectedEntries.map((e) => e.full_path));
+
+  return (
+    <div className="flex flex-wrap content-start gap-0 p-1">
+      {entries.map((entry) => {
+        const isSelected = selectedPaths.has(entry.full_path);
+        return (
+          <div
+            key={entry.full_path}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); areaRef.current?.focus(); }}
+            onDoubleClick={() => openEntry(entry)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
+            className={`flex items-center gap-1.5 px-2 py-0.5 w-52 rounded transition-colors cursor-default select-none ${
+              entry.hidden ? "opacity-50" : ""
+            } ${isSelected ? "bg-accent/10" : "hover:bg-surface-hover"}`}
+          >
+            <span className="relative shrink-0">
+              <FileIcon entry={entry} />
+              {entry.readonly && <LockBadge size={8} />}
+            </span>
+            <span className="text-[11px] text-text-primary truncate">{entry.is_directory || showExt ? entry.name : stripExtension(entry.name, entry.extension)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GridFileIcon({ entry, size = 32 }: { entry: DirectoryEntry; size?: number }) {
   if (entry.is_directory) {
     return (
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-warning">
-        <path d="M3 8C3 6.9 3.9 6 5 6h7l2 2h11c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V8z" fill="currentColor" opacity="0.2" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" className="text-warning">
+        <path d="M3 8C3 6.9 3.9 6 5 6h7l2 2h11c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V8z" fill="currentColor" opacity="0.55" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
       </svg>
     );
   }
   return (
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-text-tertiary">
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" className="text-text-tertiary">
       <path d="M8 4h10l6 6v16a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
       <path d="M18 4v6h6" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
     </svg>
   );
+}
+
+function stripExtension(name: string, extension: string): string {
+  if (!extension) return name;
+  const suffix = `.${extension}`;
+  return name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
 }
 
 function formatDate(timestamp: number): string {
@@ -1181,6 +1275,8 @@ function ContextMenu() {
   const clipboardCount = useExplorerStore((s) => s.clipboardCount);
   const currentPath = useExplorerStore((s) => s.currentPath);
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
+  const setEntryHidden = useExplorerStore((s) => s.setEntryHidden);
+  const setEntryReadonly = useExplorerStore((s) => s.setEntryReadonly);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1196,6 +1292,9 @@ function ContextMenu() {
 
   const { x, y, entry } = ctx;
   const canPaste = clipboardCount > 0 && currentPath !== null;
+  const targets = entry ? (selectedEntries.length > 0 ? selectedEntries : [entry]) : [];
+  const allHidden = targets.length > 0 && targets.every((e) => e.hidden);
+  const allReadonly = targets.length > 0 && targets.every((e) => e.readonly);
 
   return (
     <div
@@ -1214,11 +1313,11 @@ function ContextMenu() {
           <ContextMenuDivider />
           <ContextMenuItem
             label="Copy"
-            onAction={() => { copyEntries(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
+            onAction={() => { copyEntries(targets); hide(); }}
           />
           <ContextMenuItem
             label="Cut"
-            onAction={() => { cutEntries(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
+            onAction={() => { cutEntries(targets); hide(); }}
           />
           <ContextMenuItem
             label="Paste"
@@ -1232,9 +1331,18 @@ function ContextMenu() {
           />
           <ContextMenuDivider />
           <ContextMenuItem
+            label={allHidden ? "Unhide" : "Hide"}
+            onAction={() => { setEntryHidden(targets, !allHidden); hide(); }}
+          />
+          <ContextMenuItem
+            label={allReadonly ? "Remove read-only" : "Set read-only"}
+            onAction={() => { setEntryReadonly(targets, !allReadonly); hide(); }}
+          />
+          <ContextMenuDivider />
+          <ContextMenuItem
             label="Delete"
             danger
-            onAction={() => { confirmDelete(selectedEntries.length > 0 ? selectedEntries : [entry]); hide(); }}
+            onAction={() => { confirmDelete(targets); hide(); }}
           />
         </>
       ) : (
@@ -1323,6 +1431,197 @@ function DialogButton({
 
 // ── Shared sub-components ──
 
+// ── Sort & View Dropdowns (Windows 11 style) ──
+
+function DropdownMenu({ open, onClose, anchorRef, children }: { open: boolean; onClose: () => void; anchorRef: React.RefObject<HTMLButtonElement | null>; children: React.ReactNode }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!open || !anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 4, left: rect.left });
+  }, [open, anchorRef]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      if (anchorRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, onClose, anchorRef]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={menuRef}
+      className="fixed z-50 min-w-[180px] rounded-lg border border-border bg-surface py-1 shadow-lg"
+      style={{ top: pos.top, left: pos.left, boxShadow: "0 4px 16px rgba(0,0,0,0.14)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DropdownItem({ label, checked, onClick }: { label: string; checked?: boolean; onClick: () => void }) {
+  return (
+    <button
+      className="flex items-center w-full h-7 px-3 gap-2 text-[12px] text-text-primary hover:bg-surface-hover transition-colors text-left"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <span className="w-4 shrink-0 text-accent">
+        {checked && (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2.5 6l2.5 2.5 5-5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function DropdownSeparator() {
+  return <div className="h-px bg-border my-1 mx-2" />;
+}
+
+const SORT_FIELDS: { key: SortField; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "date_modified", label: "Date modified" },
+  { key: "date_created", label: "Date created" },
+  { key: "type", label: "Type" },
+  { key: "size", label: "Size" },
+];
+
+function SortDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const sortField = useExplorerStore((s) => s.sortField);
+  const sortDirection = useExplorerStore((s) => s.sortDirection);
+  const foldersFirst = useExplorerStore((s) => s.foldersFirst);
+  const setSortField = useExplorerStore((s) => s.setSortField);
+  const setSortDirection = useExplorerStore((s) => s.setSortDirection);
+  const toggleFoldersFirst = useExplorerStore((s) => s.toggleFoldersFirst);
+  const close = useCallback(() => setOpen(false), []);
+
+  const handleField = useCallback((field: SortField) => {
+    const state = useExplorerStore.getState();
+    if (state.sortField === field) {
+      state.setSortDirection(state.sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      state.setSortField(field);
+    }
+    setOpen(false);
+  }, []);
+
+  return (
+    <div className="relative">
+      <button
+        ref={ref}
+        className={`flex items-center gap-1 rounded px-1.5 py-1 text-[12px] transition-colors ${
+          open ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+        }`}
+        onClick={() => setOpen(!open)}
+        title="Sort"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 4h10M4 7h6M6 10h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+        <span>Sort</span>
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className="ml-0.5">
+          <path d="M2 3l2 2.5L6 3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <DropdownMenu open={open} onClose={close} anchorRef={ref}>
+        {SORT_FIELDS.map((f) => (
+          <DropdownItem
+            key={f.key}
+            label={f.label}
+            checked={sortField === f.key}
+            onClick={() => handleField(f.key)}
+          />
+        ))}
+        <DropdownSeparator />
+        <DropdownItem label="Ascending" checked={sortDirection === "asc"} onClick={() => { setSortDirection("asc"); setOpen(false); }} />
+        <DropdownItem label="Descending" checked={sortDirection === "desc"} onClick={() => { setSortDirection("desc"); setOpen(false); }} />
+        <DropdownSeparator />
+        <DropdownItem label="Folders first" checked={foldersFirst} onClick={() => { toggleFoldersFirst(); setOpen(false); }} />
+      </DropdownMenu>
+    </div>
+  );
+}
+
+type ViewModeType = "extra_large" | "large" | "medium" | "small" | "list" | "details";
+
+const VIEW_MODES: { key: ViewModeType; label: string }[] = [
+  { key: "extra_large", label: "Extra large icons" },
+  { key: "large", label: "Large icons" },
+  { key: "medium", label: "Medium icons" },
+  { key: "small", label: "Small icons" },
+  { key: "list", label: "List" },
+  { key: "details", label: "Details" },
+];
+
+function ViewDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const viewMode = useExplorerStore((s) => s.viewMode);
+  const setViewMode = useExplorerStore((s) => s.setViewMode);
+  const showHidden = useExplorerStore((s) => s.showHiddenItems);
+  const toggleHidden = useExplorerStore((s) => s.toggleShowHiddenItems);
+  const showExt = useExplorerStore((s) => s.showFileExtensions);
+  const toggleExt = useExplorerStore((s) => s.toggleShowFileExtensions);
+  const close = useCallback(() => setOpen(false), []);
+
+  return (
+    <div className="relative">
+      <button
+        ref={ref}
+        className={`flex items-center gap-1 rounded px-1.5 py-1 text-[12px] transition-colors ${
+          open ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+        }`}
+        onClick={() => setOpen(!open)}
+        title="View"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1.5" y="1.5" width="4.5" height="4.5" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
+          <rect x="8" y="1.5" width="4.5" height="4.5" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
+          <rect x="1.5" y="8" width="4.5" height="4.5" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
+          <rect x="8" y="8" width="4.5" height="4.5" rx="0.75" stroke="currentColor" strokeWidth="1.1" />
+        </svg>
+        <span>View</span>
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className="ml-0.5">
+          <path d="M2 3l2 2.5L6 3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <DropdownMenu open={open} onClose={close} anchorRef={ref}>
+        {VIEW_MODES.map((v) => (
+          <DropdownItem
+            key={v.key}
+            label={v.label}
+            checked={viewMode === v.key}
+            onClick={() => { setViewMode(v.key); setOpen(false); }}
+          />
+        ))}
+        <DropdownSeparator />
+        <DropdownItem label="Hidden items" checked={showHidden} onClick={toggleHidden} />
+        <DropdownItem label="File name extensions" checked={showExt} onClick={toggleExt} />
+      </DropdownMenu>
+    </div>
+  );
+}
+
 function ToolbarButton({
   children,
   label,
@@ -1351,32 +1650,6 @@ function ToolbarDivider() {
   return <div className="w-px h-5 bg-border mx-0.5 shrink-0" />;
 }
 
-function ViewToggle({
-  children,
-  active,
-  label,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`p-1 transition-colors ${
-        active
-          ? "bg-accent/10 text-accent"
-          : "text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
-      }`}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
-  );
-}
 
 function BreadcrumbItem({
   label,

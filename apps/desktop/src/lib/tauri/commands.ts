@@ -9,6 +9,7 @@ import { invoke } from "./invoke";
 import type {
   AppDirectoriesResponse,
   DirectoryEntry,
+  FileAttributes,
   HealthResponse,
   LocalDriveInfo,
   OperationResult,
@@ -112,4 +113,19 @@ export function resumeTransfer(transferId: string): Promise<boolean> {
 /** Cancel an active or paused transfer (deletes partial file). */
 export function cancelTransfer(transferId: string): Promise<boolean> {
   return invoke<boolean>("cancel_transfer", { transferId });
+}
+
+/** Get file attributes (hidden, readonly, system, archive). */
+export function getAttributes(path: string): Promise<FileAttributes> {
+  return invoke<FileAttributes>("get_attributes", { path });
+}
+
+/** Set or clear the hidden attribute on a file or folder. */
+export function setHidden(path: string, hidden: boolean): Promise<FileAttributes> {
+  return invoke<FileAttributes>("set_hidden", { path, hidden });
+}
+
+/** Set or clear the readonly attribute on a file or folder. */
+export function setReadonly(path: string, readonly: boolean): Promise<FileAttributes> {
+  return invoke<FileAttributes>("set_readonly", { path, readonly });
 }

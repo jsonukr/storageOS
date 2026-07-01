@@ -61,6 +61,7 @@ export interface DirectoryEntry {
   readonly is_directory: boolean;
   readonly size: number;
   readonly last_modified: number;
+  readonly date_created: number;
   readonly hidden: boolean;
   readonly readonly: boolean;
   readonly extension: string;
@@ -89,6 +90,14 @@ export type BridgeErrorCode =
   | "INVALID_ARGUMENT"
   | "IO_ERROR"
   | "TIMEOUT";
+
+/** File attributes returned by get_attributes / set_hidden / set_readonly. */
+export interface FileAttributes {
+  readonly hidden: boolean;
+  readonly readonly: boolean;
+  readonly system: boolean;
+  readonly archive: boolean;
+}
 
 /** Progress payload emitted during recursive search. */
 export interface SearchProgressPayload {
