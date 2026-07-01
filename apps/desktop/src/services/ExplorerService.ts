@@ -1,14 +1,31 @@
 import { listDirectory, listDrives, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory } from "@/lib/tauri";
 import type { DirectoryEntry, LocalDriveInfo, OperationResult } from "@/lib/tauri";
+import { getAgentClient } from "@/services/agent";
 
 export type { DirectoryEntry, LocalDriveInfo, OperationResult };
 
 export const ExplorerService = {
-  listDrives(): Promise<LocalDriveInfo[]> {
+  async listDrives(): Promise<LocalDriveInfo[]> {
+    const client = getAgentClient();
+    if (client?.isConnected()) {
+      try {
+        return await client.fetchRoots();
+      } catch {
+        // Agent request failed — fall back to Tauri IPC
+      }
+    }
     return listDrives();
   },
 
-  listDirectory(path: string): Promise<DirectoryEntry[]> {
+  async listDirectory(path: string): Promise<DirectoryEntry[]> {
+    const client = getAgentClient();
+    if (client?.isConnected()) {
+      try {
+        return await client.fetchDirectory(path);
+      } catch {
+        // Agent request failed — fall back to Tauri IPC
+      }
+    }
     return listDirectory(path);
   },
 

@@ -9,6 +9,14 @@ dist-ssr/
 target/
 Cargo.lock
 
+# Android / Gradle
+.gradle/
+build/
+*.apk
+*.aab
+local.properties
+gradle-wrapper.jar
+
 # Environment
 .env
 .env.*

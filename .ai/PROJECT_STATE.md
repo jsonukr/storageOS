@@ -5,8 +5,8 @@
 ## Overview
 
 - **Project**: StorageOS — unified storage virtualization platform
-- **Phase**: Sprint 05 (Core Foundation)
-- **Status**: Desktop app compiling and running (Tauri + Rust + React)
+- **Phase**: Sprint 07 (Visual Sprint — Android Remote Browse)
+- **Status**: Desktop + Agent + Android app — remote filesystem browsing from phone to desktop
 
 ## Repository Structure
 
@@ -40,7 +40,8 @@ StorageOS/
 │   └── deployment/
 ├── services/
 │   ├── api/
-│   └── agent/
+│   ├── agent/
+│   └── storageos-agent/    ← Standalone Agent binary (A-008)
 ├── shared/
 │   ├── contracts/
 │   ├── models/
@@ -263,6 +264,18 @@ StorageOS/
   - Properties panel: file info (size, dates), attribute chips (Hidden, Read Only, System, Archive), file path
   - Visual indicators: hidden files at 50% opacity, lock badge overlay on read-only files (all 3 view modes)
   - 17 IPC commands total: +get_attributes, +set_hidden, +set_readonly
+- [x] File previews with Rust-side thumbnails (EXP-006)
+  - Rust: `services/thumbnail.rs` — image thumbnail generation using `image` crate (resize + JPEG encode + base64 data URL)
+  - Rust command: `get_thumbnail(path, max_size)` via `commands/thumbnail.rs`, runs on `spawn_blocking` thread pool
+  - TypeScript bridge: `getThumbnail(path, maxSize)` IPC command
+  - Tauri v2 asset protocol enabled: `"enable": true` in config, `protocol-asset` Cargo feature, CSP null, scope `**/*`
+  - Added `image` crate v0.25 (jpeg/png/gif/webp/bmp)
+  - Explorer grid view: real image thumbnails via Rust-side generation (not full-resolution)
+  - IntersectionObserver lazy loading with 100px margin, max 3 concurrent loads, in-memory cache
+  - CSS `content-visibility: auto` + `containIntrinsicSize` for scroll performance
+  - File type detection: 12 categories with color-coded icons (PDF=red, Word=blue, Excel=green, PowerPoint=orange, etc.)
+  - Video files: lightweight SVG icon with play button overlay
+  - 18 IPC commands total: +get_thumbnail
 
 ## Shared Crates
 
@@ -333,6 +346,84 @@ StorageOS/
     - Desktop `commands/search.rs`: bridges `SearchSnapshot` → `SearchProgressPayload` with `Cell<Instant>` for 250ms throttling (compatible with `Fn` callback)
     - 41 unit tests passing (31 existing + 9 new search + 1 existing search-related). Both crates compile clean. No TypeScript/IPC/JSON changes.
 
+## StorageOS Agent (services/storageos-agent/)
+
+- [x] Standalone Agent binary (A-008)
+  - Rust binary crate: `storageos-agent` v0.1.0
+  - Depends on `storageos-core` (path dependency) — no Tauri dependency
+  - Configuration: TOML-based (`AgentConfig` struct), loads from `%LocalAppData%\StorageOS\config.toml` or `--config` CLI arg
+    - 4 sections: server (port), logging (level), database (path), storage (path)
+    - Defaults from storageos-core constants (`DEFAULT_AGENT_PORT` = 19742)
+    - CLI overrides: `--config <path>`, `--port <port>`
+  - Structured logging: `tracing` + `tracing-subscriber`, dual output (stderr human-readable + JSON daily-rotated file)
+  - SQLite database: `rusqlite` (bundled), WAL mode, `schema_version` table, idempotent init, graceful close with WAL checkpoint
+  - HTTP API (Axum 0.7): `GET /health`, `GET /version`, `GET /roots`, `GET /directory?path=...`
+  - WebSocket: `/ws` endpoint, accepts connections, Ping/Pong, infrastructure only
+  - Lifecycle: config → logging → database → provider registration → HTTP/WS → graceful shutdown (Ctrl+C)
+  - Platform paths: Windows `%LocalAppData%\StorageOS\data\`, Linux/macOS `~/.local/share/storageos/`
+  - 5 unit tests (3 config, 2 database)
+  - Dependencies: tokio, axum 0.7, rusqlite 0.32, tracing, tracing-subscriber, tracing-appender, toml, serde, serde_json
+- [x] Desktop ↔ Agent Integration Phase 1 (A-009)
+  - AgentClient service (`services/agent/AgentClient.ts`): connection state machine, health polling, auto-launch, retry loop, subscriber pattern
+  - Connection states: Offline, Starting, Connecting, Connected, Error
+  - Zustand store (`stores/agent.ts`): reactive state, version, uptime, error tracking
+  - Rust agent launcher (`services/agent.rs`): binary locator (same-dir/parent-dir), detached process spawner (Windows `CREATE_NO_WINDOW | DETACHED_PROCESS`)
+  - Tauri commands: `launch_agent` (find + spawn), `agent_port` (constant from storageos-core)
+  - TypeScript bridge: `launchAgent()`, `agentPort()`, `AgentLaunchResult` type
+  - `useAgentConnection` hook in `App.tsx` — boots on app start, wires to store
+  - StatusBar: dynamic agent status (color-coded dot, state label, version when connected)
+  - Desktop fully functional without agent — shows "Agent Offline"
+  - 20 IPC commands total (+launch_agent, +agent_port)
+- [x] Local Filesystem API Phase 1 (A-010)
+  - Agent endpoints: `GET /roots` (drive enumeration), `GET /directory?path=...` (directory listing)
+  - Agent `dto.rs`: `LocalDriveDto`, `DirectoryEntryDto`, `ErrorDto` — convert core types to UI-compatible JSON shapes
+  - `GET /directory` runs on `spawn_blocking`, maps CoreError to HTTP status codes (404/403/400/500)
+  - AgentClient: `fetchRoots()`, `fetchDirectory(path)`, `isConnected()` methods
+  - Module-level singleton: `getAgentClient()` / `setAgentClientInstance()`
+  - ExplorerService: `listDrives()` and `listDirectory()` try Agent first, silently fall back to Tauri IPC
+  - All other operations remain on Tauri IPC (unchanged)
+  - No duplicated business logic — both Agent and Desktop use `storageos_core::filesystem::*`
+  - Desktop UI unchanged, Explorer behavior identical regardless of data source
+- [x] File Read API (A-011)
+  - Agent endpoints: `GET /file?path=...` (metadata), `GET /download?path=...` (streaming), `GET /thumbnail?path=...&max_size=256` (JPEG thumbnails)
+  - `security.rs`: path validation module — rejects empty, relative, traversal (`..`), nonexistent paths; `validate_path()` and `validate_file_path()` (confirms `is_file()`); 5 unit tests
+  - `file_service.rs`: `get_file_metadata()` (validates + reads metadata → Entry), `prepare_download()` (validates file + mime_guess), `supports_thumbnail()` (jpg/jpeg/png/gif/webp/bmp), `generate_thumbnail()` (validates + opens image + resizes + JPEG encode)
+  - `GET /file`: returns `DirectoryEntryDto` via `spawn_blocking`, maps CoreError to HTTP status codes
+  - `GET /download`: streams file via `tokio::fs::File` + `ReaderStream` — never loads entire file into memory; Content-Type/Content-Length/Content-Disposition headers
+  - `GET /thumbnail`: generates JPEG thumbnail on `spawn_blocking`, configurable `max_size` (default 256), Cache-Control header
+  - Shared `core_error_to_response()` maps CoreError kinds to HTTP status codes (404/403/400/500) and error codes
+  - Dependencies added: `image 0.25` (jpeg/png/gif/webp/bmp), `tokio-util 0.7` (io), `mime_guess 2`
+  - Desktop NOT migrated — continues using Tauri IPC for all file access
+  - 51 tests passing (41 core + 10 agent)
+- [x] Agent network bind support (VS-001 prerequisite)
+  - Added `bind` field to `ServerConfig` (default: `"127.0.0.1"`)
+  - Added `--bind` CLI arg (e.g. `--bind 0.0.0.0` for LAN access)
+  - Config file support: `[server] bind = "0.0.0.0"` in config.toml
+  - Fallback to 127.0.0.1 on invalid bind address with warning log
+
+## Android App (apps/mobile/android/)
+
+- [x] Android Remote Browse MVP (VS-001)
+  - **Framework**: Jetpack Compose + Material 3 + Navigation Compose
+  - **Language**: Kotlin, minSdk 26, targetSdk 35
+  - **Architecture**: Single Activity, MVVM (ViewModel + StateFlow)
+  - **Network**: Retrofit 2 + OkHttp + kotlinx.serialization
+  - **Screens**: ConnectScreen (IP + port input) → BrowserScreen (drives → folders → files)
+  - **Agent API**: Uses `GET /health`, `GET /roots`, `GET /directory?path=...`
+  - **Features**:
+    - Enter IP and port, tap Connect, health check validates connection
+    - Drive list with storage usage bars (free/total)
+    - Directory listing with folder/file icons, name, date, size
+    - Folders first, alphabetical sort (matches Desktop)
+    - Tap folder to navigate in, system back button to go back
+    - Path shown in top bar with item count
+    - Back from drives returns to connect screen
+    - Friendly error messages (connection failed, timeout, permission denied, not found)
+    - Material You dynamic color on Android 12+
+    - Edge-to-edge display
+  - **Read-only**: No write operations, no file downloads, browse only
+  - **No**: authentication, accounts, discovery, pairing, search, transfers, settings
+
 ## Domain Model
 
 - [x] `docs/architecture/DomainModel.md` — Canonical domain model (A-002.5)
@@ -401,6 +492,21 @@ StorageOS/
 - @vitejs/plugin-react 6.0.2
 - @tauri-apps/cli (Tauri CLI)
 
+## Dependencies (apps/mobile/android)
+
+### Runtime
+- Jetpack Compose (BOM 2024.12.01)
+- Material 3 + Material Icons Extended
+- Navigation Compose 2.8.5
+- Retrofit 2.11.0 + OkHttp 4.12.0
+- kotlinx-serialization-json 1.7.3
+- Lifecycle ViewModel Compose 2.8.7
+
+### Build
+- AGP 8.7.3
+- Kotlin 2.1.0
+- Gradle 8.11.1
+
 ## Last Updated
 
-A-007 — Search engine migration (2026-07-01)
+VS-001 — Android Remote Browse MVP (2026-07-01)

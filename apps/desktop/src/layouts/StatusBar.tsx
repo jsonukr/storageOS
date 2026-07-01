@@ -1,4 +1,6 @@
 import { useExplorerStore } from "@/stores/explorer";
+import { useAgentStore } from "@/stores/agent";
+import type { AgentConnectionState } from "@/services/agent";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -9,6 +11,35 @@ function formatCount(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
   return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function agentDotColor(state: AgentConnectionState): string {
+  switch (state) {
+    case "connected":
+      return "bg-success";
+    case "connecting":
+    case "starting":
+      return "bg-warning animate-pulse";
+    case "error":
+      return "bg-danger";
+    case "offline":
+      return "bg-text-tertiary";
+  }
+}
+
+function agentLabel(state: AgentConnectionState): string {
+  switch (state) {
+    case "connected":
+      return "Agent Connected";
+    case "connecting":
+      return "Connecting...";
+    case "starting":
+      return "Starting Agent...";
+    case "error":
+      return "Agent Error";
+    case "offline":
+      return "Agent Offline";
+  }
 }
 
 export function StatusBar() {
@@ -22,6 +53,8 @@ export function StatusBar() {
   const searchDurationMs = useExplorerStore((s) => s.searchDurationMs);
   const clipboardCount = useExplorerStore((s) => s.clipboardCount);
   const clipboardOperation = useExplorerStore((s) => s.clipboardOperation);
+  const agentState = useAgentStore((s) => s.state);
+  const agentVersion = useAgentStore((s) => s.agentVersion);
 
   const isSearchActive = searchQuery.length > 0;
   let itemText: string;
@@ -60,8 +93,11 @@ export function StatusBar() {
     <footer className="flex h-6 items-center border-t border-border bg-statusbar px-3 text-[11px] text-text-secondary select-none">
       <div className="flex items-center gap-3">
         <StatusItem>
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
-          Ready
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${agentDotColor(agentState)}`} />
+          {agentLabel(agentState)}
+          {agentState === "connected" && agentVersion && (
+            <span className="text-text-tertiary ml-0.5">v{agentVersion}</span>
+          )}
         </StatusItem>
         <StatusDivider />
         <StatusItem>Local Storage</StatusItem>

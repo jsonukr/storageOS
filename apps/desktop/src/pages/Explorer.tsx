@@ -6,7 +6,83 @@ import { PropertiesPanel } from "../components/PropertiesPanel";
 import { ResizeHandle } from "../components/ResizeHandle";
 import type { DirectoryEntry } from "@/lib/tauri";
 import type { SortField } from "@/services/ExplorerSortService";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { getThumbnail } from "@/lib/tauri";
 
+// ── Thumbnail cache + load queue ──
+
+const thumbCache = new Map<string, string>();
+const THUMB_MAX_CONCURRENT = 3;
+let thumbActive = 0;
+const thumbQueue: (() => void)[] = [];
+
+function thumbAcquire(): Promise<void> {
+  if (thumbActive < THUMB_MAX_CONCURRENT) { thumbActive++; return Promise.resolve(); }
+  return new Promise(r => thumbQueue.push(r));
+}
+
+function thumbRelease() {
+  thumbActive--;
+  const next = thumbQueue.shift();
+  if (next) { thumbActive++; next(); }
+}
+
+async function loadThumb(filePath: string, size: number): Promise<string | null> {
+  const cached = thumbCache.get(filePath);
+  if (cached) return cached;
+  await thumbAcquire();
+  try {
+    const maxPx = Math.min(size * 2, 200);
+    const dataUrl = await getThumbnail(filePath, maxPx);
+    thumbCache.set(filePath, dataUrl);
+    return dataUrl;
+  } catch {
+    return null;
+  } finally {
+    thumbRelease();
+  }
+}
+
+// ── File type detection ──
+
+const IMAGE_EXTS = new Set(["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff","tif","avif","jfif"]);
+const VIDEO_EXTS = new Set(["mp4","webm","avi","mkv","mov","wmv","flv","m4v","mpg","mpeg"]);
+const AUDIO_EXTS = new Set(["mp3","wav","ogg","flac","aac","wma","m4a"]);
+const ARCHIVE_EXTS = new Set(["zip","rar","7z","tar","gz","bz2","xz"]);
+
+type FileCategory = "folder"|"image"|"video"|"audio"|"pdf"|"word"|"excel"|"powerpoint"|"archive"|"code"|"text"|"executable"|"other";
+
+function getFileCategory(ext: string): FileCategory {
+  const e = ext.toLowerCase();
+  if (IMAGE_EXTS.has(e)) return "image";
+  if (VIDEO_EXTS.has(e)) return "video";
+  if (AUDIO_EXTS.has(e)) return "audio";
+  if (e === "pdf") return "pdf";
+  if (["doc","docx","odt","rtf"].includes(e)) return "word";
+  if (["xls","xlsx","ods","csv"].includes(e)) return "excel";
+  if (["ppt","pptx","odp"].includes(e)) return "powerpoint";
+  if (ARCHIVE_EXTS.has(e)) return "archive";
+  if (["js","ts","jsx","tsx","py","rs","java","c","cpp","h","cs","go","rb","php","swift","kt"].includes(e)) return "code";
+  if (["txt","md","json","xml","html","css","yml","yaml","toml","ini","cfg","log"].includes(e)) return "text";
+  if (["exe","msi","bat","cmd","com"].includes(e)) return "executable";
+  return "other";
+}
+
+const FILE_COLORS: Record<FileCategory, string> = {
+  folder: "#dcb44c",
+  image: "#26A69A",
+  video: "#7B1FA2",
+  audio: "#F57C00",
+  pdf: "#E2574C",
+  word: "#2B579A",
+  excel: "#217346",
+  powerpoint: "#D24726",
+  archive: "#FFA000",
+  code: "#5C6BC0",
+  text: "#78909C",
+  executable: "#546E7A",
+  other: "#78909C",
+};
 
 const NAV_MIN = 180;
 const NAV_MAX = 360;
@@ -517,10 +593,10 @@ function GridView({ entries, viewMode, areaRef }: { entries: DirectoryEntry[]; v
                 ? "bg-accent/10 ring-1 ring-accent/30"
                 : "hover:bg-surface-hover"
             }`}
-            style={{ padding: `${sz.pad * 4}px` }}
+            style={{ padding: `${sz.pad * 4}px`, contentVisibility: "auto", containIntrinsicSize: `${sz.min}px ${sz.min + 30}px` }}
           >
             <span className="relative">
-              <GridFileIcon entry={entry} size={sz.icon} />
+              <FileThumbnail entry={entry} size={sz.icon} />
               {entry.readonly && <LockBadge size={Math.max(10, sz.icon * 0.25)} />}
             </span>
             <span className="text-text-primary text-center leading-tight line-clamp-2 w-full break-all" style={{ fontSize: `${sz.text}px` }}>
@@ -541,10 +617,12 @@ function FileIcon({ entry }: { entry: DirectoryEntry }) {
       </svg>
     );
   }
+  const cat = getFileCategory(entry.extension);
+  const color = FILE_COLORS[cat];
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0 text-text-tertiary">
-      <path d="M3.5 1.5h5l3 3V11.5a1 1 0 01-1 1h-7a1 1 0 01-1-1v-9a1 1 0 011-1z" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
-      <path d="M8.5 1.5V4.5h3" stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" />
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0">
+      <path d="M3.5 1.5h5l3 3V11.5a1 1 0 01-1 1h-7a1 1 0 01-1-1v-9a1 1 0 011-1z" fill={color} opacity="0.15" stroke={color} strokeWidth="0.8" strokeLinejoin="round" />
+      <path d="M8.5 1.5V4.5h3" stroke={color} strokeWidth="0.8" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -598,7 +676,36 @@ function ListView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: Re
   );
 }
 
-function GridFileIcon({ entry, size = 32 }: { entry: DirectoryEntry; size?: number }) {
+function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: number }) {
+  const [src, setSrc] = useState<string | null>(() => thumbCache.get(entry.full_path) ?? null);
+  const [loadError, setLoadError] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const cancelled = useRef(false);
+
+  useEffect(() => {
+    cancelled.current = false;
+    return () => { cancelled.current = true; };
+  }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (entry.is_directory || getFileCategory(entry.extension) !== "image" || size < 32) return;
+    if (thumbCache.has(entry.full_path)) { setSrc(thumbCache.get(entry.full_path)!); return; }
+    const observer = new IntersectionObserver(
+      ([e]) => {
+        if (!e.isIntersecting) return;
+        observer.disconnect();
+        loadThumb(entry.full_path, size).then(url => {
+          if (!cancelled.current) { if (url) setSrc(url); else setLoadError(true); }
+        });
+      },
+      { rootMargin: "100px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [entry.full_path, entry.is_directory, entry.extension, size]);
+
   if (entry.is_directory) {
     return (
       <svg width={size} height={size} viewBox="0 0 32 32" fill="none" className="text-warning">
@@ -606,12 +713,135 @@ function GridFileIcon({ entry, size = 32 }: { entry: DirectoryEntry; size?: numb
       </svg>
     );
   }
+
+  const cat = getFileCategory(entry.extension);
+
+  if (cat === "image" && size >= 32 && !loadError) {
+    return (
+      <div
+        ref={ref}
+        className="rounded overflow-hidden bg-surface-secondary flex items-center justify-center"
+        style={{ width: size, height: size, contain: "strict" }}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt=""
+            className="w-full h-full object-cover"
+            draggable={false}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  if (cat === "video" && size >= 48) {
+    const color = FILE_COLORS.video;
+    return (
+      <div
+        className="rounded overflow-hidden bg-surface-secondary flex items-center justify-center relative"
+        style={{ width: size, height: size }}
+      >
+        <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 32 32" fill="none">
+          <rect x="2" y="6" width="28" height="20" rx="2" fill={color} opacity="0.2" stroke={color} strokeWidth="1" />
+          <path d="M13 11v10l8-5-8-5z" fill={color} opacity="0.7" />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div
+            className="rounded-full bg-black/50 flex items-center justify-center"
+            style={{ width: size * 0.3, height: size * 0.3 }}
+          >
+            <svg width={size * 0.15} height={size * 0.15} viewBox="0 0 12 12" fill="white">
+              <path d="M3 1.5v9l7.5-4.5L3 1.5z" />
+            </svg>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const color = FILE_COLORS[cat];
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" className="text-text-tertiary">
-      <path d="M8 4h10l6 6v16a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
-      <path d="M18 4v6h6" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
+      <path
+        d="M8 4h10l6 6v16a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z"
+        fill={color}
+        opacity="0.15"
+        stroke={color}
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+      <path d="M18 4v6h6" stroke={color} strokeWidth="1" strokeLinejoin="round" />
+      <CategorySymbol category={cat} color={color} />
     </svg>
   );
+}
+
+function CategorySymbol({ category, color }: { category: FileCategory; color: string }) {
+  switch (category) {
+    case "image":
+      return (
+        <>
+          <circle cx="12" cy="17" r="2" fill={color} opacity="0.5" />
+          <path d="M8 23l4-5 3 3 3-4 4 6H8z" fill={color} opacity="0.35" />
+        </>
+      );
+    case "video":
+      return <path d="M12 15v6l5-3-5-3z" fill={color} opacity="0.6" />;
+    case "audio":
+      return (
+        <>
+          <path d="M14 14v7" stroke={color} strokeWidth="1.5" opacity="0.5" />
+          <circle cx="12" cy="21" r="2" fill={color} opacity="0.5" />
+        </>
+      );
+    case "pdf":
+      return (
+        <text x="16" y="22" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" opacity="0.7">
+          PDF
+        </text>
+      );
+    case "word":
+      return (
+        <text x="16" y="22" textAnchor="middle" fill={color} fontSize="9" fontWeight="bold" opacity="0.7">
+          W
+        </text>
+      );
+    case "excel":
+      return (
+        <text x="16" y="22" textAnchor="middle" fill={color} fontSize="9" fontWeight="bold" opacity="0.7">
+          X
+        </text>
+      );
+    case "powerpoint":
+      return (
+        <text x="16" y="22" textAnchor="middle" fill={color} fontSize="9" fontWeight="bold" opacity="0.7">
+          P
+        </text>
+      );
+    case "archive":
+      return (
+        <path d="M14 14h4v2h-4v2h4v2h-4v2h4" stroke={color} strokeWidth="0.8" opacity="0.5" />
+      );
+    case "code":
+      return (
+        <path
+          d="M11 17l-2 2 2 2M21 17l2 2-2 2M14 23l4-10"
+          stroke={color}
+          strokeWidth="0.8"
+          strokeLinecap="round"
+          opacity="0.5"
+        />
+      );
+    case "executable":
+      return (
+        <path d="M11 16h10M11 19h10M11 22h6" stroke={color} strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      );
+    default:
+      return (
+        <path d="M10 16h12M10 19h12M10 22h8" stroke={color} strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      );
+  }
 }
 
 function stripExtension(name: string, extension: string): string {

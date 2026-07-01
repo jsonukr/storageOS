@@ -7,6 +7,7 @@
 
 import { invoke } from "./invoke";
 import type {
+  AgentLaunchResult,
   AppDirectoriesResponse,
   DirectoryEntry,
   FileAttributes,
@@ -128,4 +129,19 @@ export function setHidden(path: string, hidden: boolean): Promise<FileAttributes
 /** Set or clear the readonly attribute on a file or folder. */
 export function setReadonly(path: string, readonly: boolean): Promise<FileAttributes> {
   return invoke<FileAttributes>("set_readonly", { path, readonly });
+}
+
+/** Generate a JPEG thumbnail for an image file. Returns a data URL. */
+export function getThumbnail(path: string, maxSize: number): Promise<string> {
+  return invoke<string>("get_thumbnail", { path, maxSize });
+}
+
+/** Launch the StorageOS Agent background process. */
+export function launchAgent(): Promise<AgentLaunchResult> {
+  return invoke<AgentLaunchResult>("launch_agent");
+}
+
+/** Get the configured agent port from storageos-core constants. */
+export function agentPort(): Promise<number> {
+  return invoke<number>("agent_port");
 }

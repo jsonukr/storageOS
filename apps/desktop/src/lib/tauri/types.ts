@@ -106,6 +106,13 @@ export interface SearchProgressPayload {
   readonly matches_found: number;
 }
 
+/** Result of attempting to launch the StorageOS Agent. */
+export interface AgentLaunchResult {
+  readonly launched: boolean;
+  readonly binary_path: string | null;
+  readonly port: number;
+}
+
 /** Progress payload emitted during file transfers. */
 export interface TransferProgressPayload {
   readonly transferId: string;

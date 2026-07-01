@@ -1,0 +1,20 @@
+# StorageOS Agent Configuration
+# Copy this file to %LocalAppData%\StorageOS\config.toml and edit as needed.
+
+[server]
+# HTTP API port. The Agent binds to 127.0.0.1 on this port.
+port = 19742
+
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"
+
+[database]
+# Path to the SQLite database file.
+# Defaults to %LocalAppData%\StorageOS\data\agent.db
+# path = ""
+
+[storage]
+# Base path for managed storage metadata.
+# Defaults to %LocalAppData%\StorageOS\data
+# path = ""
