@@ -91,9 +91,9 @@ export class TransferQueue {
   updateProgress(id: string, bytesTransferred: number, totalBytes: number, speed: number): boolean {
     const job = this.jobs.find((j) => j.id === id);
     if (!job) return false;
-    if (job.status === "queued") {
+    if (job.status === "queued" || job.status === "paused") {
       job.status = "running";
-      job.startedAt = Date.now();
+      if (job.startedAt === null) job.startedAt = Date.now();
     } else if (job.status !== "running") {
       return false;
     }

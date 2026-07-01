@@ -523,17 +523,73 @@ onBridgeEvent("transfer:progress", (payload) => {
           name: job.name,
         },
       });
+    } else if (payload.error.includes("already exists in the destination") && job) {
+      TransferService.removeJob(payload.transferId);
+      useExplorerStore.setState({
+        pasteConflict: {
+          sourcePath: job.source,
+          destDir: job.destination,
+          fileName: job.name,
+          isCut: job.type === "move",
+          remainingItems: [],
+        },
+      });
     } else {
       useExplorerStore.setState({ notification: payload.error });
     }
     return;
   }
-  if (payload.status !== "completed") return;
+  if (payload.status !== "completed" && payload.status !== "cancelled") return;
   const { currentPath } = useExplorerStore.getState();
   if (!currentPath) return;
   const job = TransferService.getJob(payload.transferId);
   if (job && job.destination === currentPath) {
     useExplorerStore.getState().refresh();
+  }
+});
+
+document.addEventListener("keydown", (e: KeyboardEvent) => {
+  const inTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+  const state = useExplorerStore.getState();
+
+  if (e.key === "Delete") {
+    if (inTextInput && (e.target as HTMLInputElement).value.length > 0) return;
+    if (state.selectedEntries.length > 0 && state.deleteTargets.length === 0) {
+      e.preventDefault();
+      if (inTextInput) (e.target as HTMLElement).blur();
+      state.confirmDelete(state.selectedEntries);
+    }
+    return;
+  }
+
+  if (inTextInput) return;
+
+  if (e.ctrlKey && e.key === "a") {
+    e.preventDefault();
+    state.selectEntry(null);
+    const list = state.searchResults ?? state.entries;
+    if (list.length > 0) {
+      useExplorerStore.setState({ selectedEntries: [...list] });
+    }
+    return;
+  }
+
+  if (!e.ctrlKey && !e.metaKey) return;
+  if (e.key === "c") {
+    if (state.selectedEntries.length > 0) {
+      e.preventDefault();
+      state.copyEntries(state.selectedEntries);
+    }
+  } else if (e.key === "x") {
+    if (state.selectedEntries.length > 0) {
+      e.preventDefault();
+      state.cutEntries(state.selectedEntries);
+    }
+  } else if (e.key === "v") {
+    if (state.currentPath) {
+      e.preventDefault();
+      state.pasteEntries();
+    }
   }
 });
 

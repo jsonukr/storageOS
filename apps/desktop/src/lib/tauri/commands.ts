@@ -98,3 +98,18 @@ export function startTransfer(
     newName,
   });
 }
+
+/** Pause an active transfer (waits between chunk writes). */
+export function pauseTransfer(transferId: string): Promise<boolean> {
+  return invoke<boolean>("pause_transfer", { transferId });
+}
+
+/** Resume a paused transfer. */
+export function resumeTransfer(transferId: string): Promise<boolean> {
+  return invoke<boolean>("resume_transfer", { transferId });
+}
+
+/** Cancel an active or paused transfer (deletes partial file). */
+export function cancelTransfer(transferId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_transfer", { transferId });
+}

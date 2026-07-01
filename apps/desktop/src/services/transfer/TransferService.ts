@@ -1,6 +1,6 @@
 import { TransferQueue } from "./TransferQueue";
 import type { TransferJob, TransferType } from "./types";
-import { onBridgeEvent } from "@/lib/tauri";
+import { onBridgeEvent, pauseTransfer, resumeTransfer, cancelTransfer } from "@/lib/tauri";
 
 const queue = new TransferQueue();
 
@@ -15,16 +15,16 @@ export const TransferService = {
     return queue.enqueue(type, name, source, destination, totalBytes);
   },
 
-  cancelJob(id: string): boolean {
-    return queue.cancel(id);
+  cancelJob(id: string): void {
+    cancelTransfer(id).catch(() => {});
   },
 
-  pauseJob(id: string): boolean {
-    return queue.pause(id);
+  pauseJob(id: string): void {
+    pauseTransfer(id).catch(() => {});
   },
 
-  resumeJob(id: string): boolean {
-    return queue.resume(id);
+  resumeJob(id: string): void {
+    resumeTransfer(id).catch(() => {});
   },
 
   removeJob(id: string): boolean {
@@ -63,6 +63,10 @@ onBridgeEvent("transfer:progress", (payload) => {
     TransferService.setStatus(transferId, "completed");
   } else if (status === "failed") {
     TransferService.setStatus(transferId, "failed", error ?? "Transfer failed");
+  } else if (status === "cancelled") {
+    TransferService.setStatus(transferId, "cancelled");
+  } else if (status === "paused") {
+    TransferService.setStatus(transferId, "paused");
   } else {
     TransferService.updateProgress(transferId, bytesTransferred, totalBytes, speedBytesPerSecond);
   }

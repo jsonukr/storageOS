@@ -100,7 +100,7 @@ export interface SearchProgressPayload {
 /** Progress payload emitted during file transfers. */
 export interface TransferProgressPayload {
   readonly transferId: string;
-  readonly status: "running" | "completed" | "failed";
+  readonly status: "running" | "completed" | "failed" | "paused" | "cancelled";
   readonly bytesTransferred: number;
   readonly totalBytes: number;
   readonly progress: number;

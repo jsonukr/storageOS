@@ -1,13 +1,65 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 const CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const EMIT_INTERVAL: Duration = Duration::from_millis(100);
+const PAUSE_POLL: Duration = Duration::from_millis(50);
+
+const SIGNAL_RUNNING: u8 = 0;
+const SIGNAL_PAUSED: u8 = 1;
+const SIGNAL_CANCEL: u8 = 2;
+
+static CONTROLS: Lazy<Mutex<HashMap<String, Arc<AtomicU8>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn register(id: &str) -> Arc<AtomicU8> {
+    let signal = Arc::new(AtomicU8::new(SIGNAL_RUNNING));
+    CONTROLS.lock().unwrap().insert(id.to_string(), Arc::clone(&signal));
+    signal
+}
+
+pub fn unregister(id: &str) {
+    CONTROLS.lock().unwrap().remove(id);
+}
+
+pub fn set_signal(id: &str, value: u8) -> bool {
+    if let Some(signal) = CONTROLS.lock().unwrap().get(id) {
+        signal.store(value, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+#[derive(Debug)]
+enum ChunkAction {
+    Continue,
+    Cancelled,
+}
+
+fn check_signal(signal: &AtomicU8, app: &AppHandle, transfer_id: &str, offset: u64, total: u64, start: Instant) -> ChunkAction {
+    loop {
+        let val = signal.load(Ordering::Relaxed);
+        if val == SIGNAL_CANCEL {
+            return ChunkAction::Cancelled;
+        }
+        if val == SIGNAL_PAUSED {
+            emit_progress(app, transfer_id, "paused", offset, total, start, None);
+            std::thread::sleep(PAUSE_POLL);
+            continue;
+        }
+        return ChunkAction::Continue;
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,12 +147,18 @@ fn copy_file_chunked(
     total: u64,
     last_emit: &mut Instant,
     start: Instant,
-) -> std::io::Result<()> {
+    signal: &AtomicU8,
+) -> Result<(), TransferError> {
     let mut reader = BufReader::new(File::open(src)?);
     let mut writer = BufWriter::new(File::create(dest)?);
     let mut buf = vec![0u8; CHUNK_SIZE];
 
     loop {
+        match check_signal(signal, app, transfer_id, *offset, total, start) {
+            ChunkAction::Cancelled => return Err(TransferError::Cancelled),
+            ChunkAction::Continue => {}
+        }
+
         let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
@@ -117,6 +175,27 @@ fn copy_file_chunked(
     Ok(())
 }
 
+#[derive(Debug)]
+enum TransferError {
+    Io(std::io::Error),
+    Cancelled,
+}
+
+impl From<std::io::Error> for TransferError {
+    fn from(e: std::io::Error) -> Self {
+        TransferError::Io(e)
+    }
+}
+
+impl std::fmt::Display for TransferError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransferError::Io(e) => write!(f, "{e}"),
+            TransferError::Cancelled => write!(f, "Transfer cancelled"),
+        }
+    }
+}
+
 fn copy_dir_chunked(
     src: &Path,
     dest: &Path,
@@ -126,7 +205,8 @@ fn copy_dir_chunked(
     total: u64,
     last_emit: &mut Instant,
     start: Instant,
-) -> std::io::Result<()> {
+    signal: &AtomicU8,
+) -> Result<(), TransferError> {
     fs::create_dir(dest)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -141,6 +221,7 @@ fn copy_dir_chunked(
                 total,
                 last_emit,
                 start,
+                signal,
             )?;
         } else {
             copy_file_chunked(
@@ -152,6 +233,7 @@ fn copy_dir_chunked(
                 total,
                 last_emit,
                 start,
+                signal,
             )?;
         }
     }
@@ -317,6 +399,7 @@ pub fn execute_transfer(
         }
     }
 
+    let signal = register(transfer_id);
     let mut offset = 0u64;
     let mut last_emit = Instant::now();
 
@@ -332,6 +415,7 @@ pub fn execute_transfer(
             total_bytes,
             &mut last_emit,
             start,
+            &signal,
         )
     } else {
         copy_file_chunked(
@@ -343,8 +427,11 @@ pub fn execute_transfer(
             total_bytes,
             &mut last_emit,
             start,
+            &signal,
         )
     };
+
+    unregister(transfer_id);
 
     match copy_result {
         Ok(_) => {
@@ -372,6 +459,24 @@ pub fn execute_transfer(
                 transfer_id,
                 "completed",
                 total_bytes,
+                total_bytes,
+                start,
+                None,
+            );
+        }
+        Err(TransferError::Cancelled) => {
+            if dest.exists() {
+                let _ = if dest.is_dir() {
+                    fs::remove_dir_all(&dest)
+                } else {
+                    fs::remove_file(&dest)
+                };
+            }
+            emit_progress(
+                app,
+                transfer_id,
+                "cancelled",
+                offset,
                 total_bytes,
                 start,
                 None,

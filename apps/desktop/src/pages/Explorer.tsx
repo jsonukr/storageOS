@@ -48,51 +48,6 @@ export default function Explorer() {
   const canGoForward = forwardStack.length > 0;
   const canGoUp = currentPath !== null && getParentPath(currentPath) !== null;
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const state = useExplorerStore.getState();
-
-      if (e.key === "Delete") {
-        if (state.selectedEntries.length > 0 && state.deleteTargets.length === 0) {
-          e.preventDefault();
-          state.confirmDelete(state.selectedEntries);
-        }
-        return;
-      }
-
-      if (e.ctrlKey && e.key === "a") {
-        e.preventDefault();
-        const list = state.searchResults ?? state.entries;
-        state.selectEntry(null);
-        if (list.length > 0) {
-          useExplorerStore.setState({ selectedEntries: [...list] });
-        }
-        return;
-      }
-
-      if (!e.ctrlKey && !e.metaKey) return;
-      if (e.key === "c") {
-        if (state.selectedEntries.length > 0) {
-          e.preventDefault();
-          state.copyEntries(state.selectedEntries);
-        }
-      } else if (e.key === "x") {
-        if (state.selectedEntries.length > 0) {
-          e.preventDefault();
-          state.cutEntries(state.selectedEntries);
-        }
-      } else if (e.key === "v") {
-        if (state.currentPath) {
-          e.preventDefault();
-          state.pasteEntries();
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, []);
-
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <Notification />
@@ -306,6 +261,7 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
   const hideContextMenu = useExplorerStore((s) => s.hideContextMenu);
+  const areaRef = useRef<HTMLDivElement>(null);
 
   const searchQuery = useExplorerStore((s) => s.searchQuery);
   const searchResults = useExplorerStore((s) => s.searchResults);
@@ -329,20 +285,22 @@ function FileArea({ viewMode }: { viewMode: string }) {
       if (searchResults !== null && searchResults.length === 0) return <NoResultsState query={searchQuery} />;
       if (searchResults !== null) {
         return viewMode === "details"
-          ? <DetailsView entries={searchResults} />
-          : <GridView entries={searchResults} />;
+          ? <DetailsView entries={searchResults} areaRef={areaRef} />
+          : <GridView entries={searchResults} areaRef={areaRef} />;
       }
     }
 
     if (entries.length === 0) return <EmptyState />;
     return viewMode === "details"
-      ? <DetailsView entries={entries} />
-      : <GridView entries={entries} />;
+      ? <DetailsView entries={entries} areaRef={areaRef} />
+      : <GridView entries={entries} areaRef={areaRef} />;
   };
 
   return (
     <div
-      className="flex-1 flex flex-col overflow-hidden bg-surface min-w-0"
+      ref={areaRef}
+      tabIndex={-1}
+      className="flex-1 flex flex-col overflow-hidden bg-surface min-w-0 outline-none"
       onClick={() => { selectEntry(null); hideContextMenu(); }}
       onContextMenu={handleBackgroundContext}
     >
@@ -455,7 +413,7 @@ function NoResultsState({ query }: { query: string }) {
   );
 }
 
-function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
+function DetailsView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: React.RefObject<HTMLDivElement | null> }) {
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
@@ -469,7 +427,7 @@ function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
         return (
           <div
             key={entry.full_path}
-            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); }}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); areaRef.current?.focus(); }}
             onDoubleClick={() => openEntry(entry)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
             className={`flex items-center h-[26px] px-3 transition-colors cursor-default select-none border-b border-transparent ${
@@ -500,7 +458,7 @@ function DetailsView({ entries }: { entries: DirectoryEntry[] }) {
   );
 }
 
-function GridView({ entries }: { entries: DirectoryEntry[] }) {
+function GridView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: React.RefObject<HTMLDivElement | null> }) {
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const openEntry = useExplorerStore((s) => s.openEntry);
@@ -514,7 +472,7 @@ function GridView({ entries }: { entries: DirectoryEntry[] }) {
         return (
           <div
             key={entry.full_path}
-            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); }}
+            onClick={(e) => { e.stopPropagation(); selectEntry(entry, e.ctrlKey || e.metaKey, e.shiftKey); areaRef.current?.focus(); }}
             onDoubleClick={() => openEntry(entry)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!isSelected) selectEntry(entry); showContextMenu(e.clientX, e.clientY, entry); }}
             className={`flex flex-col items-center gap-1 p-2 rounded-md transition-colors cursor-default select-none ${
@@ -1031,15 +989,19 @@ function getLastSegment(path: string): string {
 
 function TransferProgressOverlay() {
   const jobs = useTransferStore((s) => s.jobs);
+  const pauseJob = useTransferStore((s) => s.pauseJob);
+  const resumeJob = useTransferStore((s) => s.resumeJob);
+  const cancelJob = useTransferStore((s) => s.cancelJob);
   const clearCompleted = useTransferStore((s) => s.clearCompleted);
   const [dismissed, setDismissed] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
 
   const activeJobs = jobs.filter(
-    (j) => j.status === "running" || j.status === "preparing",
+    (j) => j.status === "running" || j.status === "preparing" || j.status === "paused",
   );
 
   const hasActive = activeJobs.length > 0;
+  const isPaused = activeJobs.length > 0 && activeJobs.every((j) => j.status === "paused");
 
   useEffect(() => {
     if (hasActive) setDismissed(false);
@@ -1055,8 +1017,9 @@ function TransferProgressOverlay() {
 
   const remaining = totalBytes - transferred;
   const etaSeconds = totalSpeed > 0 ? remaining / totalSpeed : 0;
-  const etaText =
-    totalSpeed <= 0
+  const etaText = isPaused
+    ? "Paused"
+    : totalSpeed <= 0
       ? "Calculating..."
       : etaSeconds < 60
         ? `About ${Math.ceil(etaSeconds)} seconds remaining`
@@ -1065,11 +1028,27 @@ function TransferProgressOverlay() {
           : `About ${Math.floor(etaSeconds / 3600)}h ${Math.ceil((etaSeconds % 3600) / 60)}m remaining`;
 
   const currentJob = activeJobs[0];
-  const operationType = currentJob.type === "move" ? "Moving" : "Copying";
+  const operationType = isPaused ? "Paused" : currentJob.type === "move" ? "Moving" : "Copying";
   const sourceName = getLastSegment(currentJob.source);
   const destName = getLastSegment(currentJob.destination);
   const itemsRemaining = activeJobs.length;
   const remainingBytes = activeJobs.reduce((sum, j) => sum + (j.totalBytes - j.bytesTransferred), 0);
+
+  const handlePauseResume = () => {
+    for (const job of activeJobs) {
+      if (job.status === "paused") {
+        resumeJob(job.id);
+      } else if (job.status === "running") {
+        pauseJob(job.id);
+      }
+    }
+  };
+
+  const handleCancel = () => {
+    for (const job of activeJobs) {
+      cancelJob(job.id);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
@@ -1078,7 +1057,9 @@ function TransferProgressOverlay() {
 
         {/* ── Maroon title bar ── */}
         <div className="flex items-center justify-between px-3 py-1.5" style={{ background: "#6b1a2a" }}>
-          <span className="text-[11px] text-white/90 font-normal">{progressPct}% complete</span>
+          <span className="text-[11px] text-white/90 font-normal">
+            {isPaused ? "Paused" : `${progressPct}% complete`}
+          </span>
           <div className="flex items-center gap-1">
             <button className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" aria-label="Minimize">
               <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" strokeWidth="1.2" /></svg>
@@ -1103,18 +1084,29 @@ function TransferProgressOverlay() {
                 <span className="font-semibold">{sourceName}</span> to{" "}
                 <span className="font-semibold">{destName}</span>
               </p>
-              <p className="text-[13px] text-text-primary mt-0.5">{progressPct}% complete</p>
+              <p className="text-[13px] text-text-primary mt-0.5">
+                {isPaused ? "Paused" : `${progressPct}% complete`}
+              </p>
             </div>
             <div className="flex items-center gap-1 ml-3 shrink-0">
-              {/* Pause button (visual only — not wired yet) */}
-              <button className="p-1.5 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors" aria-label="Pause" title="Pause">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M5 3h2v10H5zM9 3h2v10H9z" fill="currentColor" />
-                </svg>
-              </button>
-              {/* Cancel button */}
               <button
-                onClick={() => { setDismissed(true); clearCompleted(); }}
+                onClick={handlePauseResume}
+                className="p-1.5 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors"
+                aria-label={isPaused ? "Resume" : "Pause"}
+                title={isPaused ? "Resume" : "Pause"}
+              >
+                {isPaused ? (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M5 3v10l8-5-8-5Z" fill="currentColor" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M5 3h2v10H5zM9 3h2v10H9z" fill="currentColor" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={handleCancel}
                 className="p-1.5 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors"
                 aria-label="Cancel" title="Cancel"
               >
@@ -1129,7 +1121,7 @@ function TransferProgressOverlay() {
           <div className="px-4 pb-3">
             <div className="h-[6px] bg-border rounded-sm overflow-hidden">
               <div
-                className="h-full bg-[#0078d4] transition-all duration-300"
+                className={`h-full transition-all duration-300 ${isPaused ? "bg-[#d4a017]" : "bg-[#0078d4]"}`}
                 style={{ width: `${Math.min(overallProgress, 100)}%` }}
               />
             </div>
@@ -1137,7 +1129,7 @@ function TransferProgressOverlay() {
             {/* Speed (right aligned) */}
             <div className="flex justify-end mt-1.5">
               <span className="text-[12px] text-text-secondary">
-                Speed: {totalSpeed > 0 ? `${formatProgressBytes(totalSpeed)}/s` : "—"}
+                Speed: {isPaused ? "Paused" : totalSpeed > 0 ? `${formatProgressBytes(totalSpeed)}/s` : "—"}
               </span>
             </div>
           </div>

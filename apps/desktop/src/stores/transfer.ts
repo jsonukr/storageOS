@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { TransferService } from "@/services/transfer";
+import { startTransfer } from "@/lib/tauri";
 import type { TransferJob, TransferType } from "@/services/transfer";
 
 interface TransferState {
@@ -9,6 +10,7 @@ interface TransferState {
   pauseJob: (id: string) => void;
   resumeJob: (id: string) => void;
   removeJob: (id: string) => void;
+  retryJob: (id: string) => void;
   clearCompleted: () => void;
 }
 
@@ -43,6 +45,17 @@ export const useTransferStore = create<TransferState>((set) => {
 
     removeJob: (id) => {
       TransferService.removeJob(id);
+    },
+
+    retryJob: (id) => {
+      const old = TransferService.getJob(id);
+      if (!old || old.status !== "failed") return;
+      TransferService.removeJob(id);
+      const job = TransferService.addJob(old.type, old.name, old.source, old.destination, 0);
+      TransferService.setStatus(job.id, "running");
+      startTransfer(job.id, old.source, old.destination, old.type).catch(() =>
+        TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
+      );
     },
 
     clearCompleted: () => {

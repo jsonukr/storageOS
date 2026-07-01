@@ -63,6 +63,7 @@ export default function Transfers() {
   const pauseJob = useTransferStore((s) => s.pauseJob);
   const resumeJob = useTransferStore((s) => s.resumeJob);
   const removeJob = useTransferStore((s) => s.removeJob);
+  const retryJob = useTransferStore((s) => s.retryJob);
   const clearCompleted = useTransferStore((s) => s.clearCompleted);
 
   const active = jobs.filter((j) => j.status === "running" || j.status === "preparing");
@@ -118,25 +119,25 @@ export default function Transfers() {
                 <SectionHeader label="Active" count={active.length} />
               )}
               {active.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} />
+                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} onRetry={retryJob} />
               ))}
               {paused.length > 0 && (
                 <SectionHeader label="Paused" count={paused.length} />
               )}
               {paused.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} />
+                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} onRetry={retryJob} />
               ))}
               {queued.length > 0 && (
                 <SectionHeader label="Queued" count={queued.length} />
               )}
               {queued.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} />
+                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} onRetry={retryJob} />
               ))}
               {finished.length > 0 && (
                 <SectionHeader label="Finished" count={finished.length} />
               )}
               {finished.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} />
+                <JobRow key={job.id} job={job} onCancel={cancelJob} onPause={pauseJob} onResume={resumeJob} onRemove={removeJob} onRetry={retryJob} />
               ))}
             </tbody>
           </table>
@@ -162,9 +163,10 @@ interface JobRowProps {
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
 }
 
-function JobRow({ job, onCancel, onPause, onResume, onRemove }: JobRowProps) {
+function JobRow({ job, onCancel, onPause, onResume, onRemove, onRetry }: JobRowProps) {
   const isTerminal = job.status === "completed" || job.status === "cancelled" || job.status === "failed";
 
   return (
@@ -251,6 +253,11 @@ function JobRow({ job, onCancel, onPause, onResume, onRemove }: JobRowProps) {
           {!isTerminal && (
             <ActionButton label="Cancel" onClick={() => onCancel(job.id)}>
               <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </ActionButton>
+          )}
+          {job.status === "failed" && (
+            <ActionButton label="Retry" onClick={() => onRetry(job.id)}>
+              <path d="M11.5 7A4.5 4.5 0 112.5 7M2.5 3v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </ActionButton>
           )}
           {isTerminal && (
