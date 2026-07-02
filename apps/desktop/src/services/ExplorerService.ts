@@ -52,4 +52,16 @@ export const ExplorerService = {
   searchDirectory(path: string, query: string, recursive?: boolean): Promise<DirectoryEntry[]> {
     return searchDirectory(path, query, recursive);
   },
+
+  async listRemoteRoots(address: string): Promise<LocalDriveInfo[]> {
+    const r = await fetch(`http://${address}/roots`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error("Failed to load remote drives");
+    return r.json();
+  },
+
+  async listRemoteDirectory(address: string, path: string): Promise<DirectoryEntry[]> {
+    const r = await fetch(`http://${address}/directory?path=${encodeURIComponent(path)}`, { signal: AbortSignal.timeout(60000) });
+    if (!r.ok) throw new Error("Failed to load remote directory");
+    return r.json();
+  },
 };

@@ -14,6 +14,8 @@ import com.storageos.android.api.AgentApi
 import com.storageos.android.ui.browser.BrowserScreen
 import com.storageos.android.ui.browser.BrowserViewModel
 import com.storageos.android.ui.connect.ConnectScreen
+import com.storageos.android.ui.devices.DevicesScreen
+import com.storageos.android.ui.settings.SettingsScreen
 
 @Composable
 fun AppNavigation() {
@@ -53,9 +55,31 @@ fun AppNavigation() {
                             popUpTo("browser") { inclusive = true }
                         }
                     },
+                    onOpenSettings = {
+                        navController.navigate("settings")
+                    },
+                    onOpenDevices = {
+                        navController.navigate("devices")
+                    },
                     viewModel = browserViewModel,
                 )
             }
+        }
+
+        composable("devices") {
+            val api = connectedApi
+            if (api != null) {
+                DevicesScreen(
+                    api = api,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+
+        composable("settings") {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }

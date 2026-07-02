@@ -9,6 +9,7 @@ data class HealthResponse(
     @SerialName("uptime_secs") val uptimeSecs: Long,
     val version: String,
     val platform: String,
+    @SerialName("device_id") val deviceId: String = "",
 )
 
 @Serializable
@@ -41,4 +42,26 @@ data class DirectoryEntry(
 data class ErrorResponse(
     val code: String,
     val message: String,
+)
+
+@Serializable
+data class PairDeviceRequest(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("system_name") val systemName: String,
+    @SerialName("device_type") val deviceType: String,
+    val platform: String,
+    val version: String,
+    val address: String,
+    @SerialName("pairing_token") val pairingToken: String,
+)
+
+@Serializable
+data class PairDeviceResponse(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("system_name") val systemName: String,
+    @SerialName("device_type") val deviceType: String,
+    val platform: String,
+    val version: String,
+    val address: String,
+    val paired: Boolean,
 )

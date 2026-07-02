@@ -2,15 +2,18 @@
 
 mod config;
 mod database;
+mod device_registry;
 mod dto;
 mod file_service;
 mod logging;
+mod presence;
 mod security;
 mod server;
 mod tray;
 
 use config::{parse_args, AgentConfig};
 use database::Database;
+use device_registry::DeviceRegistry;
 use server::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -66,11 +69,33 @@ async fn main() {
         Err(e) => tracing::warn!(error = %e, "Could not read schema version"),
     }
 
+    let registry_path = cfg.database_path().with_file_name("devices.db");
+    let registry = match DeviceRegistry::open(&registry_path) {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to initialize device registry");
+            std::process::exit(1);
+        }
+    };
+
+    let device_id = match registry.get_or_create_device_id() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get device identity");
+            std::process::exit(1);
+        }
+    };
+
+    tracing::info!(device_id = %device_id, "Device identity established");
+
     tracing::info!("Local Storage Provider registered");
+
+    presence::spawn_presence_poller(registry.clone());
+    tracing::info!("Presence poller started (12s interval)");
 
     let tray_rx = tray::spawn(cfg.log_dir());
 
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(registry, device_id));
     let app = server::router(state);
 
     let bind_ip: std::net::IpAddr = cfg.server.bind.parse().unwrap_or_else(|_| {

@@ -5,7 +5,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.storageos.android.ui.devices.DeviceRecord
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
@@ -19,6 +22,12 @@ interface AgentApi {
 
     @GET("/directory")
     suspend fun directory(@Query("path") path: String): List<DirectoryEntry>
+
+    @POST("/devices/pair")
+    suspend fun pairDevice(@Body request: PairDeviceRequest): PairDeviceResponse
+
+    @GET("/devices")
+    suspend fun listDevices(): List<DeviceRecord>
 
     companion object {
         fun create(host: String, port: Int): AgentApi {

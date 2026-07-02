@@ -67,6 +67,19 @@ class BrowserViewModel : ViewModel() {
         navigateTo(entry.fullPath, pushHistory = true)
     }
 
+    fun navigateToPath(path: String) {
+        loadDirectory(path, emptyList())
+    }
+
+    fun refresh() {
+        val current = _state.value
+        if (current.currentPath != null) {
+            loadDirectory(current.currentPath!!, current.pathHistory)
+        } else {
+            loadRoots()
+        }
+    }
+
     fun goBack(): Boolean {
         val current = _state.value
         if (current.pathHistory.isEmpty()) {

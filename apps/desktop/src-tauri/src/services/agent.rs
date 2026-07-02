@@ -6,45 +6,45 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Locate the agent binary.
-///
-/// Search order:
-/// 1. Same directory as the desktop executable
-/// 2. `../services/storageos-agent/` relative to desktop exe (dev layout)
-/// 3. PATH fallback
 pub fn find_agent_binary() -> Option<PathBuf> {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
+    let bin_name = if cfg!(windows) { "storageos-agent.exe" } else { "storageos-agent" };
+
     if let Some(ref dir) = exe_dir {
-        let candidate = dir.join("storageos-agent.exe");
+        let candidate = dir.join(bin_name);
         if candidate.exists() {
             return Some(candidate);
         }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let candidate = dir.join("storageos-agent");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
     }
 
-    // Dev layout: cargo target directory
+    // Dev layout: desktop exe is at apps/desktop/src-tauri/target/debug/
+    // Agent is at services/storageos-agent/target/debug/
+    // Walk up to project root and look for agent
     if let Some(ref dir) = exe_dir {
-        if let Some(target_dir) = dir.parent() {
-            let candidate = target_dir.join("storageos-agent.exe");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                let candidate = target_dir.join("storageos-agent");
+        let mut ancestor = dir.as_path();
+        for _ in 0..6 {
+            if let Some(parent) = ancestor.parent() {
+                ancestor = parent;
+                let candidate = ancestor
+                    .join("services")
+                    .join("storageos-agent")
+                    .join("target")
+                    .join("debug")
+                    .join(bin_name);
                 if candidate.exists() {
                     return Some(candidate);
+                }
+                let release = ancestor
+                    .join("services")
+                    .join("storageos-agent")
+                    .join("target")
+                    .join("release")
+                    .join(bin_name);
+                if release.exists() {
+                    return Some(release);
                 }
             }
         }
@@ -53,8 +53,6 @@ pub fn find_agent_binary() -> Option<PathBuf> {
     None
 }
 
-/// Spawn the agent as a detached background process.
-/// Returns Ok(()) if the process was spawned successfully.
 pub fn launch_agent(binary_path: &Path, port: u16) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -65,6 +63,8 @@ pub fn launch_agent(binary_path: &Path, port: u16) -> Result<(), String> {
         Command::new(binary_path)
             .arg("--port")
             .arg(port.to_string())
+            .arg("--bind")
+            .arg("0.0.0.0")
             .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
             .spawn()
             .map_err(|e| format!("Failed to spawn agent: {e}"))?;
@@ -75,6 +75,8 @@ pub fn launch_agent(binary_path: &Path, port: u16) -> Result<(), String> {
         Command::new(binary_path)
             .arg("--port")
             .arg(port.to_string())
+            .arg("--bind")
+            .arg("0.0.0.0")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

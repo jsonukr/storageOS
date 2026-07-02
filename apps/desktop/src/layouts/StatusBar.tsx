@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useExplorerStore } from "@/stores/explorer";
 import { useAgentStore } from "@/stores/agent";
 import type { AgentConnectionState } from "@/services/agent";
+import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -55,6 +57,7 @@ export function StatusBar() {
   const clipboardOperation = useExplorerStore((s) => s.clipboardOperation);
   const agentState = useAgentStore((s) => s.state);
   const agentVersion = useAgentStore((s) => s.agentVersion);
+  const [showPairDialog, setShowPairDialog] = useState(false);
 
   const isSearchActive = searchQuery.length > 0;
   let itemText: string;
@@ -132,7 +135,21 @@ export function StatusBar() {
         )}
       </div>
       <div className="flex-1" />
+      {agentState === "connected" && (
+        <button
+          onClick={() => setShowPairDialog(true)}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors mr-2"
+          title="Pair mobile device"
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+            <rect x="3" y="0.5" width="6" height="11" rx="1" stroke="currentColor" strokeWidth="0.9" />
+            <path d="M5 9.5h2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+          </svg>
+          Pair
+        </button>
+      )}
       <StatusItem>100%</StatusItem>
+      {showPairDialog && <PairDeviceDialog onClose={() => setShowPairDialog(false)} />}
     </footer>
   );
 }

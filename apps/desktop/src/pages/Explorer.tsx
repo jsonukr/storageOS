@@ -97,6 +97,8 @@ export default function Explorer() {
   const toggleProperties = useExplorerStore((s) => s.toggleProperties);
   const propertiesWidth = useExplorerStore((s) => s.propertiesWidth);
   const setPropertiesWidth = useExplorerStore((s) => s.setPropertiesWidth);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
+  const exitRemoteBrowse = useExplorerStore((s) => s.exitRemoteBrowse);
 
   const onNavResize = useCallback(
     (delta: number) => {
@@ -159,7 +161,7 @@ export default function Explorer() {
 
         {/* Actions */}
         <div className="flex items-center gap-0.5">
-          <ToolbarButton label="New Folder" disabled={currentPath === null} onClick={() => useExplorerStore.getState().openNewFolderDialog()}>
+          <ToolbarButton label="New Folder" disabled={currentPath === null || !!remoteDevice} onClick={() => useExplorerStore.getState().openNewFolderDialog()}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               <path d="M7 6v4M5 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -195,6 +197,24 @@ export default function Explorer() {
           </ToolbarButton>
         </div>
       </div>
+
+      {/* ── Remote device banner ── */}
+      {remoteDevice && (
+        <div className="flex items-center gap-2 border-b border-border bg-accent/10 px-3 py-1.5 text-xs">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+            <line x1="12" y1="18" x2="12.01" y2="18" />
+          </svg>
+          <span className="font-medium text-text-primary">Browsing: {remoteDevice.name}</span>
+          <span className="text-text-secondary">({remoteDevice.address})</span>
+          <button
+            onClick={exitRemoteBrowse}
+            className="ml-auto rounded px-2 py-0.5 text-xs font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
 
       {/* ── Address Bar ── */}
       <AddressBar />
@@ -240,18 +260,18 @@ export default function Explorer() {
 // ── Address Bar ──
 
 function parseBreadcrumbs(path: string): { label: string; path: string }[] {
-  const normalized = path.replace(/\//g, "\\");
-  const parts = normalized.split("\\").filter(Boolean);
+  const isUnixAbs = path.startsWith("/");
+  const sep = isUnixAbs ? "/" : "\\";
+  const normalized = isUnixAbs ? path : path.replace(/\//g, "\\");
+  const parts = normalized.split(sep).filter(Boolean);
   const crumbs: { label: string; path: string }[] = [];
   for (let i = 0; i < parts.length; i++) {
     const segment = parts[i];
-    if (i === 0 && /^[A-Za-z]:$/.test(segment)) {
+    if (i === 0 && !isUnixAbs && /^[A-Za-z0-9]:$/.test(segment)) {
       crumbs.push({ label: segment + "\\", path: segment + "\\" });
     } else {
-      const fullPath = crumbs.length > 0
-        ? crumbs[crumbs.length - 1].path.replace(/\\$/, "") + "\\" + segment
-        : segment;
-      crumbs.push({ label: segment, path: fullPath });
+      const prev = crumbs.length > 0 ? crumbs[crumbs.length - 1].path.replace(/[\\/]$/, "") : (isUnixAbs ? "" : "");
+      crumbs.push({ label: segment, path: prev + sep + segment });
     }
   }
   return crumbs;
@@ -261,6 +281,7 @@ function AddressBar() {
   const currentPath = useExplorerStore((s) => s.currentPath);
   const navigateTo = useExplorerStore((s) => s.navigateTo);
   const refresh = useExplorerStore((s) => s.refresh);
+  const rd = useExplorerStore((s) => s.remoteDevice);
 
   const crumbs = currentPath !== null ? parseBreadcrumbs(currentPath) : [];
 
@@ -268,7 +289,7 @@ function AddressBar() {
     <div className="flex items-center gap-1.5 border-b border-border bg-toolbar px-2 py-1">
       <div className="flex items-center flex-1 h-7 rounded-md border border-border bg-surface px-1.5 gap-0.5 text-[12px] overflow-hidden">
         <BreadcrumbItem
-          label="This PC"
+          label={rd ? rd.name : "This PC"}
           first
           active={currentPath === null}
         />

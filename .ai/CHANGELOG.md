@@ -4,6 +4,115 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Sprint 08 — Productization & Device Experience + TDN-001
+
+#### 2026-07-02 — TDN-001: Trusted Device Network Foundation
+
+- **Agent: Persistent Device Registry (Parts 1–2)**: SQLite-backed device storage replacing in-memory HashMap
+  - `devices.db` with `agent_identity` (persistent UUID v4) and `devices` tables (13 columns)
+  - `DeviceRegistry` struct with full CRUD: register, get, list, update friendly name, update status, remove
+  - Editable friendly names via PATCH `/devices/{id}`, system name immutable, device_id as sole unique key
+  - Dependencies: `uuid 1` (v4), `reqwest 0.12` (json, rustls-tls), `tower-http 0.6` (cors)
+
+- **Agent: Enhanced QR Pairing (Part 3)**: Mutual registration protocol
+  - QR payload now includes device_id, pairing_token (UUID v4), version
+  - POST `/devices/pair` validates pairing_token, stores remote device, returns own device info
+  - Both devices store each other's info — no host/client distinction
+
+- **Agent: Presence & Heartbeat (Parts 4, 5, 9)**: Background health monitoring
+  - Presence poller: tokio task polls `GET /presence` on every known device every 12 seconds
+  - Updates device status to online/offline in SQLite
+  - GET `/presence` endpoint returns device_id, system_name, status, address, version, platform, capabilities, uptime, timestamp
+  - Serves as auto-reconnect — offline devices automatically detected when they come back
+
+- **Agent: Forget Device (Part 6)**: Bilateral trust removal
+  - DELETE `/devices/{id}` removes local record + spawns async reqwest task to POST `/devices/{id}/forget` on remote
+  - Remote endpoint removes the requesting device from its own registry
+
+- **Desktop: Device Dashboard (Part 7)**: Rich device management UI
+  - Devices page rewritten with "This PC" card and paired devices section
+  - Device cards show: friendly name, type icon (phone/desktop), status dot, platform, address, paired date, version
+  - Action buttons: Browse (disabled when offline), Rename (modal with system name), Forget (confirmation with bilateral warning)
+  - Rename dialog: text input with Enter key submit, shows system name reference
+  - Forget dialog: warns about bilateral removal, requires confirmation
+  - NavigationPanel DevicesSection updated: uses DeviceRecord format, type-aware icons, status-aware dots
+  - PairDeviceDialog updated: shows version from enhanced pairing info
+  - Polls `/devices` every 8 seconds for live status
+
+- **Android: Enhanced Pairing + Device Dashboard (Parts 3, 7)**: Full TDN integration
+  - `PairDeviceRequest`/`PairDeviceResponse` replace old `RegisterDeviceRequest`/`RegisteredDevice`
+  - `DeviceStore.getOrCreateDeviceId()` generates persistent UUID v4 for phone identity
+  - `SavedDevice` stores full device record: deviceId, host, port, name, systemName, deviceType, platform, version
+  - Device dedup by device_id instead of host:port — handles IP changes
+  - `ConnectViewModel` updated: parses enhanced QR payload, calls `/devices/pair` with pairing_token, sends phone's own device info
+  - New `DevicesScreen` + `DevicesViewModel`: shows paired devices with live status (online/offline)
+  - `DeviceCard` composable: device icon, friendly name, status indicator, platform/version/paired date/last seen
+  - Devices button in BrowserScreen top bar, navigation route wired
+  - `AgentApi.listDevices()` endpoint added
+
+- **Android: Embedded HTTP Server (Part 8a)**: Symmetric storage foundation
+  - `StorageServer.kt`: NanoHTTPD server on port 19743, bound to `0.0.0.0`
+  - Endpoints: `/health`, `/presence`, `/roots` (StatFs), `/directory?path=...` (dotfile-filtered, folders-first), `/download?path=...` (streaming)
+  - Path translation: `0:\` maps to `Environment.getExternalStorageDirectory()`
+  - JSON shapes match desktop agent exactly — same `DirectoryEntry`, `LocalDriveInfo` format
+  - CORS headers (`Access-Control-Allow-Origin: *`) for desktop webview cross-origin access
+  - Started in `MainActivity.onCreate`, stopped in `onDestroy`
+  - Storage permissions: `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO`
+
+- **Desktop: Remote Device Browsing (Part 8b)**: Browse phone storage from Explorer
+  - `ExplorerService.listRemoteRoots(address)` and `listRemoteDirectory(address, path)` methods
+  - `ExplorerStore.remoteDevice` state with `browseRemoteDevice()` / `exitRemoteBrowse()` actions
+  - `loadDirectory` transparently routes to local or remote based on `remoteDevice` state
+  - Remote device banner in Explorer toolbar: shows device name, address, Disconnect button
+  - AddressBar shows device name instead of "This PC" when browsing remote
+  - Breadcrumb navigation supports Unix-style absolute paths (Android native paths)
+  - NavigationPanel: devices are clickable to browse, active device highlighted, "This PC" returns to local
+  - Devices page: Browse button calls `browseRemoteDevice` + navigates to Explorer
+  - File operations (create folder, rename, delete) disabled in remote browse mode
+
+- **Agent: CORS Fix**: Added `tower-http` CorsLayer with `allow_origin(Any)` to fix "Agent offline" in Desktop caused by Tauri webview cross-origin restrictions
+
+#### 2026-07-01
+
+- **Part 1: Background Agent**: System tray icon with menu (View Logs, Restart, Exit)
+  - `tray-icon 0.24` crate with Windows message pump on background thread
+  - 32x32 blue circle RGBA icon generated from pixels
+  - `windows_subsystem = "windows"` hides console in release builds
+  - Graceful shutdown via `tokio::select!` between Ctrl+C and tray Exit
+  - Dependencies: `tray-icon 0.24`, `windows-sys 0.59` (Win32_UI_WindowsAndMessaging)
+
+- **Part 2: Desktop Productization**: Agent auto-starts with LAN bind
+  - Desktop `launch_agent()` now passes `--bind 0.0.0.0` for LAN access
+
+- **Part 3: QR Device Pairing**: Scan QR to connect phone to desktop
+  - Agent: `GET /pair` (JSON with LAN IP, port, hostname), `GET /pair/qr` (SVG QR code)
+  - LAN IP auto-detected via UDP socket routing (no external request)
+  - Desktop: `PairDeviceDialog` component — modal with QR code, device info, fallback text
+  - "Pair" button in StatusBar (visible when agent connected)
+  - Android: ZXing embedded QR scanner with camera permission
+  - `DeviceStore` (SharedPreferences) saves paired devices for reconnection
+  - Saved devices shown as cards on ConnectScreen
+
+- **Part 4: Device Dashboard**: Desktop and Android device views
+  - Desktop NavigationPanel: "Devices" section with "This PC" status and "Pair device..." button
+  - Desktop Devices page: PC info card with agent status, pair button, empty state
+  - Android: saved device cards on ConnectScreen with tap-to-reconnect
+
+- **Part 5: Android Redesign**: Material 3 polish
+  - Breadcrumb navigation bar (scrollable, clickable path segments, home icon)
+  - Shimmer loading placeholder (animated gradient, 8 skeleton rows)
+  - Pull-to-refresh (`PullToRefreshBox`)
+  - Grid/List toggle (`LazyVerticalGrid` with adaptive 96dp columns)
+  - `AnimatedContent` transitions between loading/error/content states
+  - Item count display below breadcrumbs
+
+- **Part 6: Settings**: Desktop and Android settings pages
+  - Desktop: Agent (status/version/uptime/port/bind), Appearance (theme), Startup, About
+  - Android: Theme (system), Clear saved devices (with AlertDialog), About (version, protocol)
+  - Settings icon in BrowserScreen top bar, navigation route wired
+
+- **Part 7: Release builds**: Agent release binary compiled
+
 ### Sprint 07 — Visual Sprint (Android Remote Browse)
 
 #### 2026-07-01

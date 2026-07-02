@@ -128,6 +128,10 @@ interface ExplorerState {
   } | null;
   dismissSpaceError: () => void;
   retrySpaceError: () => void;
+
+  remoteDevice: { address: string; name: string } | null;
+  browseRemoteDevice: (address: string, name: string) => void;
+  exitRemoteBrowse: () => void;
 }
 
 let searchGeneration = 0;
@@ -141,7 +145,11 @@ function getSortConfig(): SortConfig {
 function loadDirectory(path: string, set: (partial: Partial<ExplorerState>) => void) {
   searchGeneration++;
   set({ currentPath: path, loading: true, error: null, entries: [], selectedEntries: [], searchQuery: "", searchResults: null, searchLoading: false, searchError: null, searchProgress: null, searchDurationMs: null });
-  ExplorerService.listDirectory(path)
+  const remote = useExplorerStore.getState().remoteDevice;
+  const promise = remote
+    ? ExplorerService.listRemoteDirectory(remote.address, path)
+    : ExplorerService.listDirectory(path);
+  promise
     .then((entries) => set({ entries: ExplorerSortService.sort(entries, getSortConfig()), loading: false }))
     .catch((err) =>
       set({
@@ -620,6 +628,23 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
     );
     set({ spaceError: null });
+  },
+
+  remoteDevice: null,
+  browseRemoteDevice: (address: string, name: string) => {
+    set({ remoteDevice: { address, name }, historyStack: [], forwardStack: [], currentPath: null, entries: [], loading: true, error: null, selectedEntries: [] });
+    ExplorerService.listRemoteRoots(address)
+      .then((roots) => {
+        if (roots.length === 1) {
+          loadDirectory(roots[0].letter + ":\\", set);
+        } else {
+          set({ loading: false });
+        }
+      })
+      .catch((err) => set({ loading: false, error: err instanceof Error ? err.message : String(err) }));
+  },
+  exitRemoteBrowse: () => {
+    set({ remoteDevice: null, currentPath: null, entries: [], historyStack: [], forwardStack: [], selectedEntries: [], error: null });
   },
 }));
 

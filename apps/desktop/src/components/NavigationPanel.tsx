@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { listDrives, onBridgeEvent } from "@/lib/tauri";
 import type { LocalDriveInfo } from "@/lib/tauri";
 import { useExplorerStore } from "@/stores/explorer";
+import { useAgentStore } from "@/stores/agent";
+import { PairDeviceDialog } from "./PairDeviceDialog";
 
 interface NavSection {
   id: string;
@@ -92,6 +94,7 @@ export function NavigationPanel() {
         <CollapsibleSection key={section.id} section={section} />
       ))}
       <DriveSection drives={drives} loading={loading} />
+      <DevicesSection />
       {tailSections.map((section) => (
         <CollapsibleSection key={section.id} section={section} />
       ))}
@@ -161,7 +164,11 @@ function DriveItem({ drive }: { drive: LocalDriveInfo }) {
 
   return (
     <button
-      onClick={() => navigateTo(drivePath)}
+      onClick={() => {
+        const s = useExplorerStore.getState();
+        if (s.remoteDevice) s.exitRemoteBrowse();
+        navigateTo(drivePath);
+      }}
       className={`flex w-full items-center gap-2 pl-7 pr-3 py-[5px] text-[12px] transition-colors rounded-sm group ${
         isActive
           ? "bg-accent/10 text-accent"
@@ -195,6 +202,135 @@ function DriveItem({ drive }: { drive: LocalDriveInfo }) {
         </div>
       </div>
     </button>
+  );
+}
+
+interface DeviceRecord {
+  device_id: string;
+  system_name: string;
+  friendly_name: string;
+  device_type: string;
+  platform: string;
+  version: string;
+  address: string;
+  last_seen: number;
+  paired_at: number;
+  status: string;
+}
+
+function DevicesSection() {
+  const [expanded, setExpanded] = useState(true);
+  const [showPairDialog, setShowPairDialog] = useState(false);
+  const agentState = useAgentStore((s) => s.state);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
+  const [remoteDevices, setRemoteDevices] = useState<DeviceRecord[]>([]);
+
+  useEffect(() => {
+    if (agentState !== "connected") {
+      setRemoteDevices([]);
+      return;
+    }
+
+    function poll() {
+      fetch("http://127.0.0.1:19742/devices")
+        .then((r) => r.ok ? r.json() : [])
+        .then(setRemoteDevices)
+        .catch(() => {});
+    }
+
+    poll();
+    const interval = setInterval(poll, 10_000);
+    return () => clearInterval(interval);
+  }, [agentState]);
+
+  return (
+    <div className="mb-0.5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-1.5 px-3 py-[5px] text-[12px] font-semibold text-text-secondary uppercase tracking-wider hover:bg-surface-hover transition-colors"
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          className={`shrink-0 text-text-tertiary transition-transform duration-150 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        >
+          <path d="M3 1.5l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
+        <span className="shrink-0 text-text-tertiary"><PhoneIcon /></span>
+        <span className="truncate">Devices</span>
+      </button>
+      {expanded && (
+        <div className="mt-0.5">
+          <button
+            onClick={() => { if (remoteDevice) useExplorerStore.getState().exitRemoteBrowse(); }}
+            className={`flex w-full items-center gap-2 pl-7 pr-3 py-[5px] text-[12px] transition-colors rounded-sm ${
+              !remoteDevice
+                ? "bg-accent/10 text-accent"
+                : "text-text-secondary hover:bg-surface-hover hover:text-text-primary cursor-pointer"
+            }`}
+          >
+            <span className="shrink-0 text-text-tertiary"><DesktopItemIcon /></span>
+            <span className="truncate font-medium">This PC</span>
+            <span className={`ml-auto inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
+              agentState === "connected" ? "bg-success" : "bg-text-tertiary"
+            }`} />
+          </button>
+          {remoteDevices.map((device) => (
+            <button
+              key={device.device_id}
+              disabled={device.status !== "online" || !device.address}
+              onClick={() => {
+                if (device.address) {
+                  useExplorerStore.getState().browseRemoteDevice(device.address, device.friendly_name);
+                }
+              }}
+              className={`flex w-full items-center gap-2 pl-7 pr-3 py-[5px] text-[12px] transition-colors rounded-sm ${
+                remoteDevice?.address === device.address
+                  ? "bg-accent/10 text-accent"
+                  : device.status === "online"
+                    ? "text-text-secondary hover:bg-surface-hover hover:text-text-primary cursor-pointer"
+                    : "text-text-tertiary cursor-default"
+              }`}
+            >
+              <span className="shrink-0 text-text-tertiary">
+                {device.device_type === "phone" || device.device_type === "android"
+                  ? <PhoneIcon />
+                  : <DesktopItemIcon />}
+              </span>
+              <span className="truncate font-medium">{device.friendly_name}</span>
+              <span className={`ml-auto inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
+                device.status === "online" ? "bg-success" : "bg-text-tertiary"
+              }`} />
+            </button>
+          ))}
+          <button
+            onClick={() => setShowPairDialog(true)}
+            className="flex w-full items-center gap-2 pl-7 pr-3 py-[4px] text-[12px] text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors rounded-sm"
+          >
+            <span className="shrink-0 text-text-tertiary">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="0.9" strokeDasharray="2 1.5" />
+                <path d="M6 4v4M4 6h4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span className="truncate text-text-tertiary italic">Pair device...</span>
+          </button>
+        </div>
+      )}
+      {showPairDialog && <PairDeviceDialog onClose={() => setShowPairDialog(false)} />}
+    </div>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <rect x="3" y="0.5" width="6" height="11" rx="1" stroke="currentColor" strokeWidth="0.9" />
+      <path d="M5 9.5h2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+    </svg>
   );
 }
 
