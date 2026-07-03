@@ -250,9 +250,9 @@ export default function Devices() {
 
       {/* Rename Dialog */}
       {renameTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setRenameTarget(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRenameTarget(null)}>
           <div className="bg-surface rounded-lg border border-border p-5 w-[360px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[14px] font-semibold text-text-primary mb-3">Rename Device</h3>
+            <h3 className="text-[13px] font-semibold text-text-primary mb-3">Rename Device</h3>
             <p className="text-[12px] text-text-tertiary mb-3">
               System name: {renameTarget.system_name}
             </p>
@@ -262,13 +262,13 @@ export default function Devices() {
               onChange={(e) => setRenameName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleRename()}
               autoFocus
-              className="w-full px-3 py-2 rounded-md border border-border bg-surface text-[13px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent mb-4"
+              className="w-full h-8 px-2.5 rounded-md border border-border bg-surface text-[12px] text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 mb-4"
             />
             <div className="flex justify-end gap-2">
-              <button onClick={() => setRenameTarget(null)} className="px-3 py-1.5 rounded-md text-[12px] text-text-secondary hover:bg-surface-hover transition-colors">
+              <button onClick={() => setRenameTarget(null)} className="h-8 px-4 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors">
                 Cancel
               </button>
-              <button onClick={handleRename} disabled={!renameName.trim()} className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 transition-colors">
+              <button onClick={handleRename} disabled={!renameName.trim()} className="h-8 px-4 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:pointer-events-none transition-colors">
                 Save
               </button>
             </div>
@@ -278,17 +278,17 @@ export default function Devices() {
 
       {/* Forget Confirmation */}
       {forgetTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setForgetTarget(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setForgetTarget(null)}>
           <div className="bg-surface rounded-lg border border-border p-5 w-[360px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[14px] font-semibold text-text-primary mb-2">Forget Device</h3>
-            <p className="text-[12px] text-text-secondary mb-4">
-              Are you sure you want to forget <strong>{forgetTarget.friendly_name}</strong>? This will remove the trust relationship from both devices. You'll need to scan a QR code to pair again.
+            <h3 className="text-[13px] font-semibold text-text-primary mb-2">Forget Device</h3>
+            <p className="text-[12px] text-text-secondary leading-relaxed mb-4">
+              Are you sure you want to forget <strong className="text-text-primary">{forgetTarget.friendly_name}</strong>? This will remove the trust relationship from both devices. You'll need to scan a QR code to pair again.
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setForgetTarget(null)} className="px-3 py-1.5 rounded-md text-[12px] text-text-secondary hover:bg-surface-hover transition-colors">
+              <button onClick={() => setForgetTarget(null)} className="h-8 px-4 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors">
                 Cancel
               </button>
-              <button onClick={handleForget} className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-danger text-white hover:bg-danger/90 transition-colors">
+              <button onClick={handleForget} className="h-8 px-4 rounded-md text-[12px] font-medium bg-danger text-white hover:bg-danger/90 transition-colors">
                 Forget Device
               </button>
             </div>

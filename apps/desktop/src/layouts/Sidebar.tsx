@@ -53,7 +53,7 @@ export function Sidebar() {
       }`}
     >
       {/* Logo */}
-      <div className="flex h-12 items-center gap-2.5 px-3.5 border-b border-border">
+      <div className="flex h-11 items-center gap-2.5 px-3.5 border-b border-border">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M2 4.5C2 3.12 3.12 2 4.5 2h5C10.88 2 12 3.12 12 4.5v5c0 1.38-1.12 2.5-2.5 2.5h-5C3.12 12 2 10.88 2 9.5v-5Z" fill="currentColor" fillOpacity="0.3" />
@@ -61,21 +61,22 @@ export function Sidebar() {
           </svg>
         </div>
         {!collapsed && (
-          <span className="text-sm font-semibold text-text-primary tracking-tight overflow-hidden whitespace-nowrap">
+          <span className="text-[13px] font-semibold text-text-primary tracking-tight overflow-hidden whitespace-nowrap">
             StorageOS
           </span>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
+      <nav className="flex-1 px-2 py-2 space-y-0.5">
         {navItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             end={item.path === "/"}
+            title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
-              `group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150 ${
+              `group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors duration-150 ${
                 isActive
                   ? "bg-sidebar-active text-accent-text"
                   : "text-text-secondary hover:bg-sidebar-hover hover:text-text-primary"

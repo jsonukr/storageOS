@@ -57,8 +57,8 @@ export function PropertiesPanel() {
   return (
     <div className="flex flex-col h-full overflow-y-auto select-none">
       {/* Header */}
-      <div className="px-3 py-2.5 border-b border-border">
-        <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+      <div className="px-3 py-2 border-b border-border">
+        <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
           Properties
         </h3>
       </div>

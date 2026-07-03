@@ -5,8 +5,8 @@
 ## Overview
 
 - **Project**: StorageOS — unified storage virtualization platform
-- **Phase**: Sprint 08 (Productization & Device Experience) + TDN-001 (Trusted Device Network Foundation)
-- **Status**: Desktop + Agent (system tray, SQLite device registry, mutual pairing, presence poller) + Android app (QR pairing, device dashboard, Material 3 redesign, settings)
+- **Phase**: Product Milestone 3 (Product Polish & UX) — Complete
+- **Status**: Desktop + Agent + Android app with image preview, file transfers, cross-device copy/paste, polished UI
 
 ## Repository Structure
 
@@ -486,6 +486,12 @@ StorageOS/
   - Grid/List toggle with `LazyVerticalGrid` (adaptive 96dp columns)
   - `AnimatedContent` transitions between states
   - Item count display below breadcrumbs
+- [x] Android Sectioned Home View (PM2-006)
+  - Root/home view redesigned to match desktop NavigationPanel layout
+  - "LOCAL STORAGE" section: compact DriveRow items (36dp icon, name, file system tag, 4dp progress bar, free/total text)
+  - "DEVICES" section: DeviceRow items with 8dp status dots (This Phone, My Computer)
+  - SectionHeader composable with icon + uppercase label
+  - Replaced old DriveCard with compact list-style layout
 - [x] Android Settings (Sprint 8 Part 6)
   - SettingsScreen: Theme (system), Clear saved devices (with confirmation dialog), About
   - Settings icon in BrowserScreen top bar
@@ -516,6 +522,73 @@ StorageOS/
   - NavigationPanel: devices clickable to browse, active device highlighted, "This PC" exits remote mode
   - Devices page: Browse calls `browseRemoteDevice()` + navigates to Explorer
   - File operations disabled in remote browse mode (read-only)
+
+## Product Milestone 2 — Image Preview & File Transfers
+
+- [x] Android: Image Preview with Coil (PM2-001 / PM2-006)
+  - Full-screen viewer with dark immersive background
+  - HorizontalPager for swipe left/right through all images in current folder
+  - ZoomableImage composable: pinch-to-zoom (1x–5x), double-tap zoom (3x), pan with bounds
+  - `beyondViewportPageCount = 1` for preloading adjacent images
+  - Coil SubcomposeAsyncImage with crossfade transition
+  - Loading indicator (CircularProgressIndicator), error screen (BrokenImage icon)
+  - Tap to show/hide overlay controls (filename, page counter, close button)
+  - BackHandler for back gesture support
+  - Loads from agent `/download?path=` endpoint (works for both local and remote)
+  - Supported formats: jpg, jpeg, png, gif, bmp, webp
+- [x] Desktop: Image Preview (PM2-006)
+  - Full-screen overlay (`z-[60]`) with dark background (95% opacity)
+  - Zoom: scroll wheel (0.25x–10x), double-click toggle (1x ↔ 3x), +/- keys, 0 to reset
+  - Pan: click-and-drag when zoomed in (grab/grabbing cursor)
+  - Previous/Next: arrow keys + on-screen circular buttons
+  - Escape to close
+  - Top bar: filename, page counter (N/M), zoom level, close button
+  - Loading spinner, error state with broken image icon
+  - Adjacent image preloading via `new Image()` prefetch
+  - Local images: Tauri asset protocol via `convertFileSrc()`
+  - Remote images: `http://<address>/download?path=` (transparent routing)
+  - Context menu "Preview" action for image files
+  - Integrated into explorer store: `previewImages`, `previewIndex`, `openImagePreview()`, `closeImagePreview()`, `previewNext()`, `previewPrev()`
+  - `openEntry()` now detects image files and opens preview instead of ignoring
+- [x] Android: Streaming downloads to MediaStore (PM2-005)
+  - `DownloadManager.kt`: OkHttp streaming to MediaStore Downloads with IS_PENDING pattern
+  - Progress/speed/ETA tracking every 200ms
+  - `TransferJob` data class and `TransferStatus` enum (shared with upload)
+  - Download context menu in BrowserScreen
+- [x] Android: File upload to desktop (PM2-005)
+  - `UploadManager.kt`: OkHttp multipart streaming from ContentResolver URIs
+  - `ActivityResultContracts.OpenMultipleDocuments` file picker
+  - Upload FAB alongside New Folder FAB
+- [x] Desktop: Remote download from phone (PM2-005)
+  - Rust `remote_download` command: ureq GET streaming to file with progress events
+  - Registers with storageos-core transfer controller for cancel support
+  - `ExplorerService.remoteDownloadFile()` creates TransferJob and fires
+- [x] Desktop: Remote upload to phone (PM2-005)
+  - Rust `remote_upload` command: reads file, constructs multipart body, POSTs via ureq
+  - `ExplorerService.remoteUploadToDevice()` creates TransferJob and fires
+- [x] Cross-device copy/paste (PM2-005)
+  - Clipboard stores `providerId: "remote:<address>"` for remote sources
+  - `pasteEntries()` detects source/dest device and routes to correct transfer method
+  - Remote→Local: `remoteDownloadFile()`, Local→Remote: `remoteUploadToDevice()`
+  - Cut across devices treated as copy
+  - Directory transfer handled by FolderTransferService (PM2-009)
+
+- [x] Recursive Folder Transfers (PM2-009)
+  - `FolderTransferService.ts` (~656 lines): orchestration for 3 cross-device recursive folder transfer directions
+  - `FolderTransfer` type in `types.ts`: tracks child jobs, file/folder counts, bytes, speed, current file/folder, conflict policy, cancel flag
+  - `ConflictPolicy` type: `replace_all | skip_all | keep_both_all`
+  - `listRecursive()`: depth-first recursive enumeration of source folder (local or remote)
+  - `ensureFolder()`: lazy destination folder creation — builds parent chain on demand before first file
+  - `waitForJob()`: subscribes to TransferService, resolves when child job hits terminal status
+  - Three async runners: `runRemoteToLocal`, `runLocalToRemote`, `runRemoteSameDevice`
+  - Sequential file transfers (one at a time per folder operation)
+  - Empty folder creation: remaining empty directories created after all files transfer
+  - Cancel: `cancelled` flag checked before each file, running child jobs cancelled via TransferService
+  - Error handling: continue on error, finalize with error counts, partial completion reported
+  - Explorer store `pasteEntries()`: routes `item.type === "directory"` to FolderTransferService for cross-device; local→local unchanged (Rust engine handles natively)
+  - Transfer store: subscribes to both TransferService and FolderTransferService, exposes `folderTransfers`, `cancelFolderTransfer`, `removeFolderTransfer`, `isChildJob`
+  - Transfers page: `FolderRow` component with expand/collapse, folder icon, aggregate progress (bytesTransferred/speed/ETA computed from child jobs), status detail, cancel/remove
+  - Child jobs hidden from main list via `isChildJob` filter, shown indented when folder row expanded
 
 ## Domain Model
 
@@ -601,6 +674,103 @@ StorageOS/
 - Kotlin 2.1.0
 - Gradle 8.11.1
 
+- [x] Android: Streaming Downloads with Notifications (PM2-007)
+  - `TransferNotifications.kt`: Two-channel notification system (progress + completion)
+    - `CHANNEL_PROGRESS` (IMPORTANCE_LOW): ongoing download/upload progress with percentage and speed
+    - `CHANNEL_COMPLETE` (IMPORTANCE_DEFAULT): completion, upload complete, and failure notifications
+    - Stable notification IDs via `hashCode()` with COMPLETE_OFFSET to avoid collision
+    - Opens app on tap via PendingIntent
+  - `DownloadManager.kt` enhancements:
+    - Notification integration: progress during streaming, completion after IS_PENDING cleared, failure on error, cancel on user abort
+    - `formatSpeed()`: human-readable speed formatting (B/s → KB/s → MB/s → GB/s)
+    - `resolveUniqueName()`: queries MediaStore for existing filenames, appends (1), (2), etc. for duplicates
+  - `UploadManager.kt` enhancements:
+    - Notification integration: upload progress, upload completion, failure, cancel
+    - `formatSpeed()` helper matching DownloadManager
+    - `clearCompleted()` method for clearing terminal transfer jobs
+  - `TransfersScreen.kt`: Full transfers management UI
+    - Lists all download and upload jobs with status-specific icons (cloud download/upload, check, error, cancel)
+    - Running transfers: LinearProgressIndicator, transferred/total size, speed, ETA
+    - Terminal states: Completed (size), Failed (error message), Cancelled
+    - Cancel button for active transfers, remove button for completed
+    - Clear All action in top bar for batch cleanup
+    - Empty state when no transfers
+    - `formatSize()`, `formatSpeed()`, `formatEta()` display helpers
+  - Navigation: Transfers button (SwapVert icon) in BrowserScreen top bar
+  - DownloadManager and UploadManager lifted to AppNavigation level for shared state across screens
+  - Navigation route: browser → transfers → back
+
+- [x] Streaming Uploads (PM2-008)
+  - **Rust streaming upload rewrite**: `execute_remote_upload()` in `remote_transfer_worker.rs` rewritten from full-memory `std::fs::read()` to streaming via custom `PipeRead` struct
+    - `PipeRead` implements `Read` trait with 4 phases: Header → File → Footer → Done
+    - Streams file data through multipart boundary format without loading entire file into memory
+    - Progress events emitted every 200ms via `app.emit("transfer:progress", ...)`
+    - Cancel support via `storageos_core::transfer::get_signal()` checked on every `read()` call
+    - Content-Length calculated upfront (header + file + footer) for accurate streaming
+  - **Agent /upload endpoint streaming**: Rewrote from `field.bytes().await` (full buffer) to `field.chunk().await` loop
+    - Streams chunks directly to disk via `tokio::fs::File` + `AsyncWriteExt::write_all()`
+    - `resolve_upload_name()` for duplicate filename handling (appends (1), (2), etc.)
+  - **Android /upload endpoint**: `resolveUploadName()` for duplicate filename handling on StorageServer
+    - Changed from `copyTo(overwrite=true)` to `resolveUploadName()` + `copyTo(overwrite=false)`
+  - **Desktop file picker**: Native file dialog via `rfd` crate (Rust File Dialog)
+    - `pick_files` Tauri command: opens native Windows file picker, returns selected file paths with names and sizes
+    - TypeScript: `pickFiles()` IPC command, `PickedFile` type
+    - Upload toolbar button wired to `pickFiles()` → `remoteUploadToDevice()` / `uploadToLocal()`
+    - Context menu "Upload files" option on right-click background
+    - `ExplorerService.uploadToLocal()`: local copy via existing transfer pipeline
+  - **Dependencies**: Added `rfd 0.15` to desktop Cargo.toml for native file dialog
+  - 23 IPC commands total (+pick_files)
+
+- [x] Fix: Cross-device copy/paste bugs
+  - **Missing filename in upload URL**: `remoteUploadToDevice` and `remoteUpload` now include `&filename=` in upload URL query params — Android NanoHTTPD server uses this to save with correct filename
+  - **Same-device remote copy/paste**: Copying files within a remote device (same address) now works via `remoteCopyOnDevice()` (download blob + re-upload) instead of showing "not supported" error
+  - **Conflict resolution preserves providerId**: `pasteConflict` stores `providerId` so cross-device paste after name conflict resolution uses the correct transfer path
+  - **Download dest path**: Trailing separator stripped before joining filename
+
+## Product Milestone 3 — Product Polish & UX
+
+- [x] Design System documentation (PM3-001)
+  - 8 files in `docs/design/`: DesignSystem.md, Colors.md, Typography.md, Icons.md, Motion.md, Desktop.md, Android.md, Accessibility.md
+  - Covers design tokens, color palettes, typography scale, icon system, animation guidelines, platform-specific patterns, WCAG 2.1 AA accessibility standards
+- [x] Desktop dark theme polish (PM3-002)
+  - Warmer Windows 11-aligned dark palette: surface, border, sidebar, toolbar, accent-subtle colors updated
+  - Deep navy (#0c1222) replaced with warmer tones (#1a1a2e) throughout
+- [x] Desktop layout polish (PM3-003)
+  - Sidebar: logo height h-12→h-11, text 13px, nav padding py-2, tooltip on collapsed items, transition-colors
+  - TopNav: title attributes on all icon buttons, context-aware theme toggle aria-label, gap/margin tweaks, breadcrumb separator shrink-0
+  - TopNav: Ctrl+K keyboard shortcut to focus search, "Ctrl+K" hint in placeholder, Esc to clear with title
+  - StatusBar: title tooltip on agent status dot
+- [x] Desktop dialog consistency (PM3-004)
+  - Devices.tsx Rename dialog: aligned backdrop (bg-black/50), heading (13px), input (h-8, 12px, focus:border-accent), buttons (h-8 px-4)
+  - Devices.tsx Forget dialog: aligned backdrop, heading, body (leading-relaxed), strong text class, buttons
+  - All dialogs now share consistent styling patterns across Explorer and Devices pages
+- [x] Desktop context menu polish (PM3-005)
+  - Min-width 160→180px, added role="menu"
+  - ContextMenuItem: added shortcut prop, role="menuitem", flex layout with right-aligned shortcut hints
+  - Shortcut hints: Open→Enter, Copy→Ctrl+C, Cut→Ctrl+X, Paste→Ctrl+V, Rename→F2, Hide→Ctrl+H, Delete→Del
+- [x] Desktop pages polish (PM3-006)
+  - Explorer: ToolbarButton rounded→rounded-md, ToolbarDivider h-4 mx-1
+  - Explorer dialogs: backdrop bg-black/50, width 360px, rounded-lg
+  - Transfers: table header bg-surface-secondary, empty state redesigned with accent-subtle icon container
+  - PropertiesPanel: header py-2, text-[11px] text-text-secondary
+- [x] Desktop empty/loading/error states (PM3-007)
+  - Transfers empty state: centered icon in rounded-2xl accent-subtle container, heading + description
+- [x] Performance review (PM3-008)
+  - Sidebar: transition-all→transition-colors (specific, avoids layout thrash)
+  - Breadcrumb separator: shrink-0 prevents layout reflow
+  - CSS containment and content-visibility already in place from EXP-006
+- [x] Desktop accessibility & keyboard (PM3-009)
+  - FileArea keyboard handler: Delete, F2, Ctrl+C/X/V/H/A, Enter, Escape, F5, Alt+Arrow (Back/Forward/Up)
+  - Ctrl+A: selects all visible entries using existing shift-select range logic
+  - Escape: clears search or deselects, F5: refresh, Alt+Arrows: navigation
+  - All keyboard shortcuts match context menu shortcut hints (PM3-005)
+- [x] Android Material 3 polish (PM3-010)
+  - Light theme: added primaryContainer, secondaryContainer, error/onError colors, refined surface/outline
+  - Dark theme: added primaryContainer, secondaryContainer, error/onError colors, refined surface/outline to match iOS-inspired dark palette
+- [x] Build verification (PM3-011)
+  - TypeScript: `npx tsc --noEmit` — clean pass
+  - Rust: `cargo check` — passed (pre-existing dead_code warnings only, unrelated to PM3)
+
 ## Last Updated
 
-Sprint 08 — Productization & Device Experience + TDN-001 (2026-07-02)
+Product Milestone 3 — PM3-011 Build verification and self review (2026-07-03)

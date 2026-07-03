@@ -4,6 +4,195 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Product Milestone 3 — Product Polish & UX
+
+#### 2026-07-03 — PM3: Visual Polish, Accessibility, Design System
+
+- **Design System Documentation (PM3-001)**: 8 comprehensive design docs in `docs/design/`
+  - `DesignSystem.md`: Design token architecture, 8px spacing grid, component principles
+  - `Colors.md`: Light/dark palettes, semantic color roles, theme switching via CSS custom properties
+  - `Typography.md`: Type scale (11px–18px), font stack, weight usage, line height
+  - `Icons.md`: Inline SVG system, 16/20px sizes, stroke widths, file type color coding
+  - `Motion.md`: 150–250ms duration targets, easing curves, transition-colors preference
+  - `Desktop.md`: Windows 11 Fluent Design patterns, Explorer-derived layouts, dialog/toolbar/context menu specs
+  - `Android.md`: Material 3 / Material You theming, Jetpack Compose patterns, touch targets
+  - `Accessibility.md`: WCAG 2.1 AA target, keyboard shortcuts reference, ARIA patterns, focus management, contrast requirements
+
+- **Desktop Dark Theme Polish (PM3-002)**: Warmer Windows 11-aligned dark palette
+  - Surface colors: deep navy (#0c1222) → warmer (#1a1a2e) series
+  - Border colors: #1e293b → #2d2d4a (more visible separation)
+  - Sidebar/toolbar/statusbar: #0f1829 → #16162b / #1e1e35
+  - Accent-subtle: #172554 → #1e2a4a
+
+- **Desktop Layout Polish (PM3-003)**: Sidebar, TopNav, StatusBar refinements
+  - Sidebar: logo h-12→h-11, text-[13px], py-2 nav items, py-[7px] item padding, tooltip on collapsed items, transition-colors
+  - TopNav: title attributes on all icon-only buttons, context-aware aria-labels, gap-1 spacing, Ctrl+K search focus shortcut with placeholder hint, Esc clear with title
+  - StatusBar: title tooltip on agent status dot
+
+- **Desktop Dialog Consistency (PM3-004)**: Unified dialog styling across pages
+  - Devices Rename dialog: backdrop bg-black/50, title text-[13px], input h-8 text-[12px] with focus:border-accent focus:ring-1, buttons h-8 px-4
+  - Devices Forget dialog: same backdrop/title/button pattern, leading-relaxed body, strong text-text-primary
+  - All dialogs now consistent with Explorer dialogs
+
+- **Desktop Context Menu Polish (PM3-005)**: Keyboard shortcut hints + ARIA
+  - Context menu: min-width 180px, role="menu"
+  - ContextMenuItem: shortcut prop, role="menuitem", flex layout with right-aligned shortcut text
+  - Shortcut hints: Open→Enter, Copy→Ctrl+C, Cut→Ctrl+X, Paste→Ctrl+V, Rename→F2, Hide→Ctrl+H, Delete→Del
+
+- **Desktop Pages Polish (PM3-006)**: Explorer, Transfers, PropertiesPanel
+  - Explorer: ToolbarButton rounded-md, ToolbarDivider h-4 mx-1, dialogs w-[360px] rounded-lg bg-black/50
+  - Transfers: table header bg-surface-secondary, empty state redesigned with accent-subtle icon + heading/description
+  - PropertiesPanel: header py-2, text-[11px] text-text-secondary
+
+- **Desktop Accessibility & Keyboard (PM3-009)**: Comprehensive keyboard navigation
+  - FileArea keyboard handler: 15+ shortcuts covering all file operations
+  - Delete, F2 rename, Ctrl+C/X/V copy/cut/paste, Ctrl+H toggle hidden, Ctrl+A select all
+  - Enter open, Escape deselect/clear search, F5 refresh
+  - Alt+Arrow navigation: Back, Forward, Up
+  - All keyboard shortcuts behave identically to context menu actions
+
+- **Android Material 3 Polish (PM3-010)**: Refined color schemes
+  - Light theme: added primaryContainer/onPrimaryContainer, secondaryContainer/onSecondaryContainer, error/onError; refined surface (#F3F3F3→#F8F8FA), surfaceContainerHigh, onSurfaceVariant, outline
+  - Dark theme: added primaryContainer/onPrimaryContainer, secondaryContainer/onSecondaryContainer, error/onError; refined surface (#202020→#1C1C1E), surfaceContainer, surfaceContainerHigh, onSurface, onSurfaceVariant, outline
+
+- **Build Verification (PM3-011)**: TypeScript and Rust clean pass
+
+### Product Milestone 2 — Image Preview & File Transfers
+
+#### 2026-07-03 — PM2-009: Recursive Folder Transfers
+
+- **FolderTransferService**: Full recursive folder transfer orchestration for cross-device directions
+  - `FolderTransfer` type: tracks childJobIds, totalFiles/completedFiles/failedFiles/skippedFiles, totalFolders/createdFolders, totalBytes/bytesTransferred, speed, currentFile/currentFolder, conflictPolicy, cancelled
+  - `ConflictPolicy` type: `replace_all | skip_all | keep_both_all`
+  - `listRecursive()`: depth-first recursive enumeration of source folder structure (local or remote)
+  - `ensureFolder()`: lazy destination folder creation — creates parent chain on demand before first file in each directory
+  - `waitForJob()`: subscribes to TransferService, resolves promise when child job reaches terminal status
+  - Three async runners: `runRemoteToLocal`, `runLocalToRemote`, `runRemoteSameDevice`
+  - Sequential file transfers within folder (one at a time to avoid overwhelming network/remote)
+  - Empty folder handling: remaining empty directories created after all files transfer
+  - Cancel support: `cancelled` flag checked before each file, running child jobs cancelled
+  - Error handling: continue on error, finalize with error counts, partial completion reported
+  - Public API: `subscribe`, `getTransfers`, `getTransfer`, `isChildJob`, `getParentId`, `cancelFolderTransfer`, `removeFolderTransfer`, `clearCompleted`, `startRemoteToLocal`, `startLocalToRemote`, `startRemoteSameDevice`
+
+- **Explorer store**: Directory routing through FolderTransferService
+  - `pasteEntries()` now routes `item.type === "directory"` to FolderTransferService for all 3 cross-device directions
+  - Remote→Local directories: `FolderTransferService.startRemoteToLocal()`
+  - Local→Remote directories: `FolderTransferService.startLocalToRemote()`
+  - Same-device remote directories: `FolderTransferService.startRemoteSameDevice()`
+  - Local→Local directories: unchanged (Rust engine's `copy_dir_chunked` handles natively)
+  - Removed `skippedDirs` variable and "folder transfer not yet supported" notification
+
+- **Transfer store**: Dual-service subscription
+  - Added `folderTransfers` state, `cancelFolderTransfer`, `removeFolderTransfer`, `isChildJob` methods
+  - Subscribes to both TransferService and FolderTransferService
+  - `clearCompleted` calls both services
+  - `syncState` reads from both services
+
+- **Transfers page**: Folder transfer UI with expandable groups
+  - `FolderRow` component: expand/collapse chevron, folder icon, aggregate progress bar, status detail (e.g. "3/10 files"), speed, ETA, elapsed, cancel/remove actions
+  - `computeFolderProgress()`: real-time aggregate bytes/speed/progress/ETA from child TransferJob objects
+  - Expanded view shows indented child jobs with smaller text and simplified display
+  - Standalone jobs filtered via `isChildJob` — child jobs hidden from main list
+  - Folder transfers grouped in Active and Finished sections alongside standalone jobs
+
+#### 2026-07-03 — PM2-008: Streaming Uploads
+
+- **Rust: Streaming Upload Rewrite**: `execute_remote_upload()` rewritten from full-memory to streaming
+  - Custom `PipeRead` struct implementing `Read` trait with Header → File → Footer → Done phases
+  - Streams file through multipart boundary format without buffering entire file in memory
+  - Progress events emitted every 200ms during upload
+  - Cancel support via `storageos_core::transfer::get_signal()` checked on each `read()` call
+  - Content-Length pre-calculated for correct HTTP streaming
+
+- **Agent: Streaming Upload Endpoint**: `/upload` endpoint rewritten from full-buffer to chunk streaming
+  - Changed from `field.bytes().await` (loads entire upload into memory) to `field.chunk().await` loop
+  - Streams chunks to disk via `tokio::fs::File` + `AsyncWriteExt::write_all()`
+  - `resolve_upload_name()`: duplicate filename handling with (1), (2), etc. suffix
+
+- **Android: Upload Conflict Handling**: `resolveUploadName()` on StorageServer
+  - Changed `serveUpload()` from `copyTo(overwrite=true)` to unique name resolution + `copyTo(overwrite=false)`
+
+- **Fix: Cross-device Copy/Paste** (Ctrl+C/V and context menu)
+  - **Missing filename in upload URL**: `remoteUploadToDevice` and `remoteUpload` now include `&filename=` query parameter in upload URLs — Android's NanoHTTPD server uses this to save files with correct names instead of temp file names
+  - **Same-device remote copy/paste**: Copy+paste within a remote device no longer shows "not supported" error — implemented via download+reupload through `remoteCopyOnDevice()`
+  - **Conflict resolution preserves providerId**: `pasteConflict` now stores `providerId` so that cross-device paste after name conflict resolution routes through the correct transfer path instead of falling back to "local"
+  - **Download dest path**: Trailing backslash stripped from `localDestDir` before joining with filename to avoid double-separator
+
+- **Desktop: Native File Picker**: `rfd` crate for native Windows file dialog
+  - New `pick_files` Tauri command: opens system file dialog, returns `Vec<PickedFile>` (path, name, size)
+  - TypeScript: `pickFiles()` IPC command, `PickedFile` type in barrel exports
+  - Upload toolbar button wired: opens native picker → `remoteUploadToDevice()` (remote) or `uploadToLocal()` (local)
+  - Context menu "Upload files" on right-click background
+  - `ExplorerService.uploadToLocal()`: copies picked files to current directory via existing transfer engine
+  - Added `rfd 0.15` dependency to desktop Cargo.toml
+
+#### 2026-07-03 — PM2-007: Streaming Downloads
+
+- **Android: Transfer Notification System**: Two-channel notifications for download/upload progress and completion
+  - `TransferNotifications.kt`: CHANNEL_PROGRESS (low importance, ongoing) for live progress with speed/percentage, CHANNEL_COMPLETE (default importance) for completion/failure alerts
+  - Stable notification IDs via `hashCode()` + COMPLETE_OFFSET to avoid collision between progress and completion
+  - Tap notification opens app via PendingIntent (FLAG_IMMUTABLE + FLAG_UPDATE_CURRENT)
+  - Download notifications: system download icon during progress, download-done on success, error icon on failure
+  - Upload notifications: system upload icon during progress, upload-done on success, error icon on failure
+  - Cancel clears both progress and completion notifications for a given job
+
+- **Android: DownloadManager Enhancements**: Notifications, duplicate filename handling, speed formatting
+  - Progress notification emitted every 200ms during streaming (matches existing progress throttle)
+  - Completion notification after MediaStore IS_PENDING cleared (atomic write confirmed)
+  - Failure notification on error with error message, cancel clears notification
+  - `resolveUniqueName()`: queries MediaStore Downloads for existing display names, appends (1), (2), etc.
+  - `formatSpeed()`: human-readable speed (B/s → KB/s → MB/s → GB/s)
+
+- **Android: UploadManager Enhancements**: Notification integration + clearCompleted
+  - Upload progress notification every 200ms with speed and percentage
+  - Upload completion and failure notifications
+  - `clearCompleted()` method for clearing terminal transfer jobs (matches DownloadManager)
+  - `formatSpeed()` helper matching DownloadManager format
+
+- **Android: Transfers Screen**: Full transfer management UI
+  - `TransfersScreen.kt`: lists all downloads and uploads with real-time status
+  - Status-specific icons: CloudDownload/CloudUpload (active), CheckCircle (completed), Error (failed), Cancel (cancelled)
+  - Running transfers: LinearProgressIndicator, transferred/total size text, speed, ETA
+  - Terminal states: Completed with size, Failed with error message, Cancelled
+  - Cancel button for active transfers, remove button for terminal states
+  - "Clear" action in top bar removes all completed/failed/cancelled jobs
+  - Empty state with icon when no transfers exist
+  - `formatSize()`, `formatSpeed()`, `formatEta()` display helpers
+
+- **Android: Navigation Integration**: Transfers accessible from browser
+  - SwapVert icon button added to BrowserScreen top bar (between grid toggle and devices)
+  - DownloadManager and UploadManager lifted to AppNavigation level for shared state across screens
+  - New navigation route: browser → transfers → back
+
+#### 2026-07-02 — PM2-006: Modern Image Preview
+
+- **Desktop: Built-in Image Viewer**: Full-screen overlay with zoom, pan, navigation
+  - Scroll wheel zoom (0.25x–10x), double-click toggle (1x ↔ 3x), keyboard (+/-/0)
+  - Click-and-drag pan when zoomed in
+  - Arrow key and on-screen button navigation (previous/next)
+  - Escape to close, top bar with filename, page counter, zoom level
+  - Loading spinner and error state
+  - Adjacent image preloading for smooth navigation
+  - Context menu "Preview" action for image files
+  - Works transparently for local files (Tauri asset protocol) and remote devices (HTTP streaming)
+  - Supported formats: jpg, jpeg, png, gif, bmp, webp
+
+- **Android: Image Preview Enhancement**: Added `beyondViewportPageCount = 1` to HorizontalPager for preloading adjacent images during swipe
+
+- **Android: Sectioned Home View**: Redesigned root/home view to match desktop NavigationPanel layout
+  - "LOCAL STORAGE" section with compact drive rows (icon, name, file system type, usage bar, free space)
+  - "DEVICES" section with "This Phone" and "My Computer" entries with online status dots
+  - Replaced large card-based DriveList with compact sectioned layout
+  - Section headers with uppercase labels and icons (matching desktop style)
+  - "My Computer" device entry navigates to Devices screen
+
+- **Desktop: Cross-device Copy/Paste Fix**: Fixed "Source not found" error when pasting files copied from remote device
+  - Clipboard now stores remote device address in `providerId`
+  - `pasteEntries()` routes to `remoteDownloadFile()` or `remoteUploadToDevice()` for cross-device transfers
+  - Cut across devices treated as copy (no atomic cross-device move)
+
+- **Desktop: Dialog Text Overflow Fix**: Long filenames in Delete and Paste Conflict dialogs now wrap properly (`overflowWrap: anywhere`)
+
 ### Sprint 08 — Productization & Device Experience + TDN-001
 
 #### 2026-07-02 — TDN-001: Trusted Device Network Foundation

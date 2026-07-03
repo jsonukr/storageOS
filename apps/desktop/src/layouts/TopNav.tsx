@@ -25,6 +25,7 @@ export function TopNav() {
         onClick={toggleSidebar}
         className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
         aria-label="Toggle sidebar"
+        title="Toggle sidebar"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -34,7 +35,7 @@ export function TopNav() {
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-[13px]" aria-label="Breadcrumb">
         <span className="text-text-tertiary">StorageOS</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" className="text-text-tertiary">
+        <svg width="12" height="12" viewBox="0 0 12 12" className="text-text-tertiary shrink-0">
           <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span className="font-medium text-text-primary">{currentLabel}</span>
@@ -44,12 +45,13 @@ export function TopNav() {
       <SearchBox />
 
       {/* Right actions */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-1">
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
           className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
-          aria-label="Toggle theme"
+          aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+          title={isDark ? "Switch to light theme" : "Switch to dark theme"}
         >
           {isDark ? (
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -67,6 +69,7 @@ export function TopNav() {
         <button
           className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
           aria-label="Notifications"
+          title="Notifications"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M4 6a4 4 0 118 0c0 2.667 1 4 1 4H3s1-1.333 1-4ZM6.5 13a1.5 1.5 0 003 0" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
@@ -75,8 +78,9 @@ export function TopNav() {
 
         {/* Profile placeholder */}
         <button
-          className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition-colors"
+          className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition-colors"
           aria-label="Profile"
+          title="Profile"
         >
           U
         </button>
@@ -103,6 +107,17 @@ function SearchBox() {
       setInputValue("");
     }
   }, [searchQuery]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const handleClear = useCallback(() => {
     setInputValue("");
@@ -140,7 +155,7 @@ function SearchBox() {
 
   const placeholder = currentPath === null
     ? "Select a folder to search..."
-    : "Search files and folders...";
+    : "Search files and folders…  Ctrl+K";
 
   return (
     <div className="flex-1 flex items-center gap-2 px-8 max-w-xl mx-auto">
@@ -173,6 +188,7 @@ function SearchBox() {
             onClick={handleClear}
             className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
             aria-label="Clear search"
+            title="Clear search (Esc)"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />

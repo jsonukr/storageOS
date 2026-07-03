@@ -96,7 +96,7 @@ export function StatusBar() {
     <footer className="flex h-6 items-center border-t border-border bg-statusbar px-3 text-[11px] text-text-secondary select-none">
       <div className="flex items-center gap-3">
         <StatusItem>
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${agentDotColor(agentState)}`} />
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${agentDotColor(agentState)}`} title={agentLabel(agentState)} />
           {agentLabel(agentState)}
           {agentState === "connected" && agentVersion && (
             <span className="text-text-tertiary ml-0.5">v{agentVersion}</span>
