@@ -7,4 +7,5 @@ pub mod file_attributes;
 pub mod file_operations;
 pub mod search;
 pub mod transfer_worker;
+pub mod remote_transfer_worker;
 pub mod thumbnail;

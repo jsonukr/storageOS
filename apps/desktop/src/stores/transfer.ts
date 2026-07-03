@@ -1,34 +1,44 @@
 import { create } from "zustand";
-import { TransferService } from "@/services/transfer";
+import { TransferService, FolderTransferService } from "@/services/transfer";
 import { startTransfer } from "@/lib/tauri";
-import type { TransferJob, TransferType } from "@/services/transfer";
+import type { TransferJob, TransferType, FolderTransfer } from "@/services/transfer";
 
 interface TransferState {
   jobs: readonly TransferJob[];
+  folderTransfers: readonly FolderTransfer[];
   addJob: (type: TransferType, name: string, source: string, destination: string, totalBytes: number) => TransferJob;
   cancelJob: (id: string) => void;
   pauseJob: (id: string) => void;
   resumeJob: (id: string) => void;
   removeJob: (id: string) => void;
   retryJob: (id: string) => void;
+  cancelFolderTransfer: (id: string) => void;
+  removeFolderTransfer: (id: string) => void;
   clearCompleted: () => void;
+  isChildJob: (id: string) => boolean;
 }
 
-function syncJobs(): { jobs: readonly TransferJob[] } {
-  return { jobs: TransferService.getJobs() };
+function syncState(): { jobs: readonly TransferJob[]; folderTransfers: readonly FolderTransfer[] } {
+  return {
+    jobs: TransferService.getJobs(),
+    folderTransfers: FolderTransferService.getTransfers(),
+  };
 }
 
 export const useTransferStore = create<TransferState>((set) => {
   TransferService.subscribe(() => {
-    set(syncJobs());
+    set(syncState());
+  });
+
+  FolderTransferService.subscribe(() => {
+    set(syncState());
   });
 
   return {
-    jobs: TransferService.getJobs(),
+    ...syncState(),
 
     addJob: (type, name, source, destination, totalBytes) => {
-      const job = TransferService.addJob(type, name, source, destination, totalBytes);
-      return job;
+      return TransferService.addJob(type, name, source, destination, totalBytes);
     },
 
     cancelJob: (id) => {
@@ -58,8 +68,21 @@ export const useTransferStore = create<TransferState>((set) => {
       );
     },
 
+    cancelFolderTransfer: (id) => {
+      FolderTransferService.cancelFolderTransfer(id);
+    },
+
+    removeFolderTransfer: (id) => {
+      FolderTransferService.removeFolderTransfer(id);
+    },
+
     clearCompleted: () => {
       TransferService.clearCompleted();
+      FolderTransferService.clearCompleted();
+    },
+
+    isChildJob: (id) => {
+      return FolderTransferService.isChildJob(id);
     },
   };
 });

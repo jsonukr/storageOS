@@ -1,2 +1,3 @@
 export { TransferService } from "./TransferService";
-export type { TransferJob, TransferStatus, TransferType } from "./types";
+export { FolderTransferService } from "./FolderTransferService";
+export type { TransferJob, TransferStatus, TransferType, FolderTransfer, ConflictPolicy } from "./types";

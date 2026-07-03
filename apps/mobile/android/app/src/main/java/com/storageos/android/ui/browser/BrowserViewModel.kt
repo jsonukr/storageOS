@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.storageos.android.api.AgentApi
 import com.storageos.android.api.DirectoryEntry
 import com.storageos.android.api.DriveInfo
+import com.storageos.android.api.MkdirRequest
+import com.storageos.android.api.RenameRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,8 @@ data class BrowserUiState(
     val content: BrowserContent? = null,
     val currentPath: String? = null,
     val pathHistory: List<String> = emptyList(),
+    val previewImages: List<DirectoryEntry> = emptyList(),
+    val previewIndex: Int = -1,
 )
 
 class BrowserViewModel : ViewModel() {
@@ -29,10 +33,13 @@ class BrowserViewModel : ViewModel() {
     val state: StateFlow<BrowserUiState> = _state.asStateFlow()
 
     private var api: AgentApi? = null
+    var agentBaseUrl: String = ""
+        private set
 
-    fun init(agentApi: AgentApi) {
+    fun init(agentApi: AgentApi, baseUrl: String = "") {
         if (api != null) return
         api = agentApi
+        agentBaseUrl = baseUrl
         loadRoots()
     }
 
@@ -127,6 +134,65 @@ class BrowserViewModel : ViewModel() {
                     isLoading = false,
                     error = friendlyError(e, path),
                 )
+            }
+        }
+    }
+
+    fun openImage(entry: DirectoryEntry) {
+        val content = _state.value.content
+        if (content !is BrowserContent.Directory) return
+        val images = content.entries.filter { it.isImage() }
+        val index = images.indexOfFirst { it.fullPath == entry.fullPath }
+        if (index >= 0) {
+            _state.value = _state.value.copy(previewImages = images, previewIndex = index)
+        }
+    }
+
+    fun closePreview() {
+        _state.value = _state.value.copy(previewImages = emptyList(), previewIndex = -1)
+    }
+
+    private fun DirectoryEntry.isImage(): Boolean =
+        !isDirectory && extension.lowercase() in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
+
+    fun createFolder(name: String, onResult: (Boolean, String?) -> Unit) {
+        val client = api ?: return
+        val path = _state.value.currentPath ?: return
+        viewModelScope.launch {
+            try {
+                client.mkdir(MkdirRequest(parent = path, name = name))
+                refresh()
+                onResult(true, null)
+            } catch (e: Exception) {
+                onResult(false, e.message ?: "Failed to create folder")
+            }
+        }
+    }
+
+    fun renameEntry(entry: DirectoryEntry, newName: String, onResult: (Boolean, String?) -> Unit) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                client.rename(RenameRequest(path = entry.fullPath, newName = newName))
+                refresh()
+                onResult(true, null)
+            } catch (e: Exception) {
+                onResult(false, e.message ?: "Failed to rename")
+            }
+        }
+    }
+
+    fun deleteEntries(entries: List<DirectoryEntry>, onResult: (Boolean, String?) -> Unit) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                for (entry in entries) {
+                    client.deleteEntry(entry.fullPath)
+                }
+                refresh()
+                onResult(true, null)
+            } catch (e: Exception) {
+                onResult(false, e.message ?: "Failed to delete")
             }
         }
     }

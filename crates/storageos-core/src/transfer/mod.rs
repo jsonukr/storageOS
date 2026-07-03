@@ -8,7 +8,7 @@
 pub mod controller;
 pub mod engine;
 
-pub use controller::{set_signal, SIGNAL_CANCEL, SIGNAL_PAUSED, SIGNAL_RUNNING};
+pub use controller::{get_signal, register, set_signal, unregister, SIGNAL_CANCEL, SIGNAL_PAUSED, SIGNAL_RUNNING};
 pub use engine::{calculate_total_size, execute_transfer, get_free_space};
 
 use crate::errors::CoreResult;

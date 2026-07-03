@@ -31,6 +31,14 @@ pub fn set_signal(id: &str, value: u8) -> bool {
     }
 }
 
+pub fn get_signal(id: &str) -> Option<u8> {
+    CONTROLS
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|s| s.load(Ordering::Relaxed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

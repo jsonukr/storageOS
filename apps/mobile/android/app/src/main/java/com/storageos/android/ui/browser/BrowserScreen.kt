@@ -10,8 +10,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,19 +48,38 @@ import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,8 +91,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,6 +110,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.storageos.android.api.AgentApi
 import com.storageos.android.api.DirectoryEntry
 import com.storageos.android.api.DriveInfo
+import com.storageos.android.transfer.DownloadEntry
+import com.storageos.android.transfer.DownloadManager
+import com.storageos.android.transfer.TransferStatus
+import com.storageos.android.transfer.UploadManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -93,18 +122,150 @@ import java.util.Locale
 @Composable
 fun BrowserScreen(
     api: AgentApi,
+    agentBaseUrl: String = "",
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
+    onOpenTransfers: () -> Unit = {},
+    downloadManager: DownloadManager,
+    uploadManager: UploadManager,
     viewModel: BrowserViewModel = viewModel(),
 ) {
-    LaunchedEffect(api) { viewModel.init(api) }
+    LaunchedEffect(api) { viewModel.init(api, agentBaseUrl) }
 
     val state by viewModel.state.collectAsState()
     val canGoBack = state.currentPath != null
     var isGridView by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        val destPath = state.currentPath ?: return@rememberLauncherForActivityResult
+        for (uri in uris) {
+            scope.launch {
+                val result = uploadManager.upload(
+                    agentBaseUrl = viewModel.agentBaseUrl,
+                    destinationPath = destPath,
+                    uri = uri,
+                )
+                when (result.status) {
+                    TransferStatus.Completed -> {
+                        snackbar.showSnackbar("${result.fileName} uploaded")
+                        viewModel.refresh()
+                    }
+                    TransferStatus.Failed ->
+                        snackbar.showSnackbar("Upload failed: ${result.error ?: "unknown error"}")
+                    TransferStatus.Cancelled ->
+                        snackbar.showSnackbar("Upload cancelled")
+                    else -> {}
+                }
+            }
+        }
+    }
+
+    var showNewFolderDialog by rememberSaveable { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<DirectoryEntry?>(null) }
+    var deleteTarget by remember { mutableStateOf<DirectoryEntry?>(null) }
+    var contextEntry by remember { mutableStateOf<DirectoryEntry?>(null) }
+
+    val onDownloadEntry = { entry: DirectoryEntry ->
+        scope.launch {
+            scope.launch { snackbar.showSnackbar("Downloading ${entry.name}…") }
+            val result = downloadManager.download(
+                agentBaseUrl = viewModel.agentBaseUrl,
+                entry = DownloadEntry(
+                    name = entry.name,
+                    fullPath = entry.fullPath,
+                    size = entry.size,
+                ),
+            )
+            when (result.status) {
+                TransferStatus.Completed ->
+                    snackbar.showSnackbar("${entry.name} saved to Downloads")
+                TransferStatus.Failed ->
+                    snackbar.showSnackbar("Download failed: ${result.error ?: "unknown error"}")
+                TransferStatus.Cancelled ->
+                    snackbar.showSnackbar("Download cancelled")
+                else -> {}
+            }
+        }
+        Unit
+    }
+
+    if (state.previewIndex >= 0 && state.previewImages.isNotEmpty()) {
+        androidx.activity.compose.BackHandler { viewModel.closePreview() }
+        ImagePreviewScreen(
+            images = state.previewImages,
+            initialIndex = state.previewIndex,
+            agentBaseUrl = viewModel.agentBaseUrl,
+            onClose = { viewModel.closePreview() },
+        )
+        return
+    }
+
+    if (showNewFolderDialog) {
+        NewFolderDialog(
+            onDismiss = { showNewFolderDialog = false },
+            onCreate = { name ->
+                viewModel.createFolder(name) { ok, err ->
+                    showNewFolderDialog = false
+                    if (!ok) scope.launch { snackbar.showSnackbar(err ?: "Error") }
+                }
+            },
+        )
+    }
+
+    if (renameTarget != null) {
+        RenameDialog(
+            entry = renameTarget!!,
+            onDismiss = { renameTarget = null },
+            onRename = { newName ->
+                viewModel.renameEntry(renameTarget!!, newName) { ok, err ->
+                    renameTarget = null
+                    if (!ok) scope.launch { snackbar.showSnackbar(err ?: "Error") }
+                }
+            },
+        )
+    }
+
+    if (deleteTarget != null) {
+        DeleteDialog(
+            entry = deleteTarget!!,
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                viewModel.deleteEntries(listOf(deleteTarget!!)) { ok, err ->
+                    deleteTarget = null
+                    if (!ok) scope.launch { snackbar.showSnackbar(err ?: "Error") }
+                }
+            },
+        )
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        floatingActionButton = {
+            if (state.currentPath != null) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    androidx.compose.material3.SmallFloatingActionButton(
+                        onClick = { filePicker.launch(arrayOf("*/*")) },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ) {
+                        Icon(Icons.Default.Upload, contentDescription = "Upload Files")
+                    }
+                    FloatingActionButton(
+                        onClick = { showNewFolderDialog = true },
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder")
+                    }
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -133,6 +294,9 @@ fun BrowserScreen(
                                 contentDescription = if (isGridView) "List view" else "Grid view",
                             )
                         }
+                    }
+                    IconButton(onClick = onOpenTransfers) {
+                        Icon(Icons.Default.SwapVert, contentDescription = "Transfers")
                     }
                     IconButton(onClick = onOpenDevices) {
                         Icon(Icons.Default.Devices, contentDescription = "Devices")
@@ -194,20 +358,31 @@ fun BrowserScreen(
                             if (animState.currentPath != null) viewModel.goBack()
                             else viewModel.loadRoots()
                         })
-                        animState.content is BrowserContent.Drives -> DriveList(
+                        animState.content is BrowserContent.Drives -> HomeView(
                             drives = (animState.content as BrowserContent.Drives).drives,
                             onDriveTap = viewModel::openDrive,
+                            onOpenDevices = onOpenDevices,
                         )
                         animState.content is BrowserContent.Directory -> {
+                            val onTap = { entry: DirectoryEntry ->
+                                if (entry.isImage()) viewModel.openImage(entry)
+                                else viewModel.openEntry(entry)
+                            }
                             if (isGridView) {
                                 EntryGrid(
                                     entries = (animState.content as BrowserContent.Directory).entries,
-                                    onEntryTap = viewModel::openEntry,
+                                    onEntryTap = onTap,
+                                    onRename = { renameTarget = it },
+                                    onDelete = { deleteTarget = it },
+                                    onDownload = onDownloadEntry,
                                 )
                             } else {
                                 EntryList(
                                     entries = (animState.content as BrowserContent.Directory).entries,
-                                    onEntryTap = viewModel::openEntry,
+                                    onEntryTap = onTap,
+                                    onRename = { renameTarget = it },
+                                    onDelete = { deleteTarget = it },
+                                    onDownload = onDownloadEntry,
                                 )
                             }
                         }
@@ -379,7 +554,11 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun DriveList(drives: List<DriveInfo>, onDriveTap: (DriveInfo) -> Unit) {
+private fun HomeView(
+    drives: List<DriveInfo>,
+    onDriveTap: (DriveInfo) -> Unit,
+    onOpenDevices: () -> Unit,
+) {
     if (drives.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -396,16 +575,63 @@ private fun DriveList(drives: List<DriveInfo>, onDriveTap: (DriveInfo) -> Unit) 
         return
     }
 
-    LazyColumn(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)) {
+    LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
+        item(key = "header-storage") {
+            SectionHeader(title = "Local Storage", icon = Icons.Default.Storage)
+        }
         items(drives, key = { it.letter }) { drive ->
-            DriveCard(drive = drive, onClick = { onDriveTap(drive) })
+            DriveRow(drive = drive, onClick = { onDriveTap(drive) })
+        }
+        item(key = "spacer-devices") {
             Spacer(Modifier.height(8.dp))
+        }
+        item(key = "header-devices") {
+            SectionHeader(title = "Devices", icon = Icons.Default.Devices)
+        }
+        item(key = "device-phone") {
+            DeviceRow(
+                icon = Icons.Default.PhoneAndroid,
+                name = "This Phone",
+                isOnline = true,
+            )
+        }
+        item(key = "device-pc") {
+            DeviceRow(
+                icon = Icons.Default.Computer,
+                name = "My Computer",
+                isOnline = true,
+                onClick = onOpenDevices,
+            )
         }
     }
 }
 
 @Composable
-private fun DriveCard(drive: DriveInfo, onClick: () -> Unit) {
+private fun SectionHeader(title: String, icon: ImageVector) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DriveRow(drive: DriveInfo, onClick: () -> Unit) {
     val usedFraction = if (drive.totalBytes > 0) drive.usedBytes.toFloat() / drive.totalBytes.toFloat() else 0f
     val progressColor = when {
         usedFraction > 0.9f -> MaterialTheme.colorScheme.error
@@ -413,60 +639,113 @@ private fun DriveCard(drive: DriveInfo, onClick: () -> Unit) {
         else -> MaterialTheme.colorScheme.primary
     }
 
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp,
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.size(36.dp),
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(48.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (drive.isRemovable) Icons.Default.SdStorage else Icons.Default.Storage,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (drive.isRemovable) Icons.Default.SdStorage else Icons.Default.Storage,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
             }
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     text = if (drive.label.isNotEmpty()) "${drive.label} (${drive.letter}:)"
                     else "Local Disk (${drive.letter}:)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
                 )
-                if (drive.totalBytes > 0) {
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { usedFraction },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = progressColor,
-                        trackColor = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
+                if (drive.fileSystem.isNotEmpty()) {
                     Text(
-                        text = "${formatBytes(drive.freeBytes)} free of ${formatBytes(drive.totalBytes)}",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = drive.fileSystem,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+            if (drive.totalBytes > 0) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { usedFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = progressColor,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "${formatBytes(drive.freeBytes)} free of ${formatBytes(drive.totalBytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun DeviceRow(
+    icon: ImageVector,
+    name: String,
+    isOnline: Boolean,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = if (isOnline) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = if (isOnline) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Surface(
+            shape = CircleShape,
+            color = if (isOnline) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outlineVariant,
+            modifier = Modifier.size(8.dp),
+        ) {}
     }
 }
 
@@ -474,6 +753,9 @@ private fun DriveCard(drive: DriveInfo, onClick: () -> Unit) {
 private fun EntryList(
     entries: List<DirectoryEntry>,
     onEntryTap: (DirectoryEntry) -> Unit,
+    onRename: (DirectoryEntry) -> Unit,
+    onDelete: (DirectoryEntry) -> Unit,
+    onDownload: (DirectoryEntry) -> Unit,
 ) {
     if (entries.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -497,20 +779,37 @@ private fun EntryList(
 
     LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
         items(entries, key = { it.fullPath }) { entry ->
-            EntryRow(entry = entry, onClick = { onEntryTap(entry) })
+            EntryRow(
+                entry = entry,
+                onClick = { onEntryTap(entry) },
+                onRename = { onRename(entry) },
+                onDelete = { onDelete(entry) },
+                onDownload = { onDownload(entry) },
+            )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun EntryRow(entry: DirectoryEntry, onClick: () -> Unit) {
+private fun EntryRow(
+    entry: DirectoryEntry,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onDownload: () -> Unit,
+) {
     val icon = getFileIcon(entry)
     val iconColor = getFileColor(entry)
+    var showMenu by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showMenu = true },
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -560,13 +859,46 @@ private fun EntryRow(entry: DirectoryEntry, onClick: () -> Unit) {
                 }
             }
         }
+        Box {
+            IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = "More",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                if (!entry.isDirectory) {
+                    DropdownMenuItem(
+                        text = { Text("Download") },
+                        onClick = { showMenu = false; onDownload() },
+                        leadingIcon = { Icon(Icons.Default.Download, null, Modifier.size(20.dp)) },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    onClick = { showMenu = false; onRename() },
+                    leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, null, Modifier.size(20.dp)) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                    onClick = { showMenu = false; onDelete() },
+                    leadingIcon = { Icon(Icons.Default.Delete, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error) },
+                )
+            }
+        }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EntryGrid(
     entries: List<DirectoryEntry>,
     onEntryTap: (DirectoryEntry) -> Unit,
+    onRename: (DirectoryEntry) -> Unit,
+    onDelete: (DirectoryEntry) -> Unit,
+    onDownload: (DirectoryEntry) -> Unit,
 ) {
     if (entries.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -593,51 +925,179 @@ private fun EntryGrid(
         items(entries, key = { it.fullPath }) { entry ->
             val icon = getFileIcon(entry)
             val iconColor = getFileColor(entry)
+            var showMenu by remember { mutableStateOf(false) }
 
-            Surface(
-                onClick = { onEntryTap(entry) },
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp,
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+            Box {
+                Surface(
+                    modifier = Modifier.combinedClickable(
+                        onClick = { onEntryTap(entry) },
+                        onLongClick = { showMenu = true },
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 1.dp,
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = iconColor.copy(alpha = 0.12f),
-                        modifier = Modifier.size(44.dp),
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp),
-                                tint = iconColor,
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = iconColor.copy(alpha = 0.12f),
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                    tint = iconColor,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = entry.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                        if (!entry.isDirectory && entry.size > 0) {
+                            Text(
+                                text = formatBytes(entry.size),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.CenterHorizontally),
                             )
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = entry.name,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                    )
-                    if (!entry.isDirectory && entry.size > 0) {
-                        Text(
-                            text = formatBytes(entry.size),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    if (!entry.isDirectory) {
+                        DropdownMenuItem(
+                            text = { Text("Download") },
+                            onClick = { showMenu = false; onDownload(entry) },
+                            leadingIcon = { Icon(Icons.Default.Download, null, Modifier.size(20.dp)) },
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        onClick = { showMenu = false; onRename(entry) },
+                        leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, null, Modifier.size(20.dp)) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                        onClick = { showMenu = false; onDelete(entry) },
+                        leadingIcon = { Icon(Icons.Default.Delete, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error) },
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NewFolderDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.CreateNewFolder, null) },
+        title = { Text("New Folder") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Folder name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onCreate(name.trim()) },
+                enabled = name.isNotBlank(),
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun RenameDialog(
+    entry: DirectoryEntry,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(entry.name) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.DriveFileRenameOutline, null) },
+        title = { Text("Rename") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("New name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank() && name != entry.name) onRename(name.trim()) },
+                enabled = name.isNotBlank() && name != entry.name,
+            ) {
+                Text("Rename")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun DeleteDialog(
+    entry: DirectoryEntry,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+        title = { Text("Delete") },
+        text = {
+            Column {
+                Text("Are you sure you want to delete \"${entry.name}\"?")
+                if (entry.isDirectory) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This folder and all its contents will be permanently deleted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

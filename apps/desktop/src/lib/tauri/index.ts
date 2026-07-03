@@ -5,7 +5,7 @@
  * Never call `@tauri-apps/api` directly from application code.
  */
 
-export { health, version, platform, appDirectories, listDrives, listDirectory, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory, startTransfer, pauseTransfer, resumeTransfer, cancelTransfer, getAttributes, setHidden, setReadonly, getThumbnail, launchAgent, agentPort } from "./commands";
+export { health, version, platform, appDirectories, listDrives, listDirectory, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory, startTransfer, pauseTransfer, resumeTransfer, cancelTransfer, getAttributes, setHidden, setReadonly, getThumbnail, launchAgent, agentPort, remoteDownload, remoteUploadFile, pickFiles } from "./commands";
 
 export { onBridgeEvent } from "./events";
 export type { BridgeEventName, BridgeReadyPayload, BridgeErrorEventPayload, SearchProgressPayload, TransferProgressPayload } from "./events";
@@ -25,5 +25,6 @@ export type {
   BridgeErrorCode,
   FileAttributes,
   AgentLaunchResult,
+  PickedFile,
   TransferProgressPayload,
 } from "./types";

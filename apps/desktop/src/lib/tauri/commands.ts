@@ -14,6 +14,7 @@ import type {
   HealthResponse,
   LocalDriveInfo,
   OperationResult,
+  PickedFile,
   PlatformResponse,
   VersionResponse,
 } from "./types";
@@ -144,4 +145,27 @@ export function launchAgent(): Promise<AgentLaunchResult> {
 /** Get the configured agent port from storageos-core constants. */
 export function agentPort(): Promise<number> {
   return invoke<number>("agent_port");
+}
+
+/** Download a file from a remote device to a local path with progress tracking. */
+export function remoteDownload(
+  transferId: string,
+  url: string,
+  destPath: string,
+): Promise<void> {
+  return invoke<void>("remote_download", { transferId, url, destPath });
+}
+
+/** Upload a local file to a remote device with progress tracking. */
+export function remoteUploadFile(
+  transferId: string,
+  sourcePath: string,
+  remoteUploadUrl: string,
+): Promise<void> {
+  return invoke<void>("remote_upload", { transferId, sourcePath, remoteUploadUrl });
+}
+
+/** Open a native file picker dialog and return selected file paths. */
+export function pickFiles(): Promise<PickedFile[]> {
+  return invoke<PickedFile[]>("pick_files");
 }

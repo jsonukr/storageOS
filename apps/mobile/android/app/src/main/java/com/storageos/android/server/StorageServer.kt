@@ -10,6 +10,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class StorageServer(
     private val deviceId: String,
@@ -35,6 +36,10 @@ class StorageServer(
                 uri == "/roots" -> serveRoots()
                 uri == "/directory" -> serveDirectory(params["path"])
                 uri == "/download" -> serveDownload(params["path"])
+                uri == "/mkdir" && session.method == Method.POST -> serveMkdir(session)
+                uri == "/rename" && session.method == Method.POST -> serveRename(session)
+                uri == "/entry" && session.method == Method.DELETE -> serveDelete(params["path"])
+                uri == "/upload" && session.method == Method.POST -> serveUpload(session, params["path"])
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Unknown endpoint"))
             }.withCors()
         } catch (e: Exception) {
@@ -107,13 +112,7 @@ class StorageServer(
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path parameter"))
         }
 
-        val resolvedPath = if (path == "0:\\") {
-            Environment.getExternalStorageDirectory().absolutePath
-        } else {
-            path.replace("0:\\", Environment.getExternalStorageDirectory().absolutePath + "/")
-                .replace("\\", "/")
-        }
-
+        val resolvedPath = resolvePath(path)
         val dir = File(resolvedPath)
         if (!dir.exists()) {
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Directory not found"))
@@ -158,6 +157,169 @@ class StorageServer(
         val response = newFixedLengthResponse(Response.Status.OK, mime, fis, file.length())
         response.addHeader("Content-Disposition", "attachment; filename=\"${file.name}\"")
         return response
+    }
+
+    private fun readJsonBody(session: IHTTPSession): Map<String, String> {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val buf = ByteArray(contentLength)
+        session.inputStream.read(buf, 0, contentLength)
+        val bodyStr = String(buf, Charsets.UTF_8)
+        return try {
+            @Suppress("UNCHECKED_CAST")
+            json.decodeFromString<Map<String, String>>(bodyStr)
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun resolvePath(path: String): String {
+        return if (path == "0:\\") {
+            Environment.getExternalStorageDirectory().absolutePath
+        } else {
+            path.replace("0:\\", Environment.getExternalStorageDirectory().absolutePath + "/")
+                .replace("\\", "/")
+        }
+    }
+
+    private fun serveMkdir(session: IHTTPSession): Response {
+        val body = readJsonBody(session)
+        val parent = body["parent"] ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing parent")
+        )
+        val name = body["name"] ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing name")
+        )
+
+        val resolvedParent = resolvePath(parent)
+        val parentDir = File(resolvedParent)
+        if (!parentDir.exists() || !parentDir.isDirectory) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Parent directory not found")
+            )
+        }
+
+        val newDir = File(parentDir, name)
+        if (newDir.exists()) {
+            return newFixedLengthResponse(
+                Response.Status.FORBIDDEN, MIME_JSON, errorJson("ALREADY_EXISTS", "A folder named \"$name\" already exists")
+            )
+        }
+
+        return if (newDir.mkdir()) {
+            val resp = json.encodeToString(OperationResp(true, newDir.absolutePath))
+            newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp)
+        } else {
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("IO_ERROR", "Failed to create folder")
+            )
+        }
+    }
+
+    private fun serveRename(session: IHTTPSession): Response {
+        val body = readJsonBody(session)
+        val path = body["path"] ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path")
+        )
+        val newName = body["new_name"] ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing new_name")
+        )
+
+        val resolvedPath = resolvePath(path)
+        val file = File(resolvedPath)
+        if (!file.exists()) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Item not found")
+            )
+        }
+
+        val dest = File(file.parentFile, newName)
+        if (dest.exists()) {
+            return newFixedLengthResponse(
+                Response.Status.FORBIDDEN, MIME_JSON, errorJson("ALREADY_EXISTS", "\"$newName\" already exists")
+            )
+        }
+
+        return if (file.renameTo(dest)) {
+            val resp = json.encodeToString(OperationResp(true, dest.absolutePath))
+            newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp)
+        } else {
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("IO_ERROR", "Failed to rename")
+            )
+        }
+    }
+
+    private fun serveDelete(path: String?): Response {
+        if (path.isNullOrBlank()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path")
+            )
+        }
+
+        val resolvedPath = resolvePath(path)
+        val file = File(resolvedPath)
+        if (!file.exists()) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Item not found")
+            )
+        }
+
+        val success = if (file.isDirectory) file.deleteRecursively() else file.delete()
+        return if (success) {
+            val resp = json.encodeToString(OperationResp(true, resolvedPath))
+            newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp)
+        } else {
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("IO_ERROR", "Failed to delete")
+            )
+        }
+    }
+
+    private fun serveUpload(session: IHTTPSession, destPath: String?): Response {
+        if (destPath.isNullOrBlank()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path query parameter")
+            )
+        }
+
+        val resolvedDest = resolvePath(destPath)
+        val destDir = File(resolvedDest)
+        if (!destDir.exists() || !destDir.isDirectory) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Destination is not a directory")
+            )
+        }
+
+        val files = HashMap<String, String>()
+        session.parseBody(files)
+
+        val tmpFilePath = files["file"] ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "No file field in upload")
+        )
+
+        @Suppress("DEPRECATION")
+        val fileName = session.parms?.get("filename")
+            ?: File(tmpFilePath).name
+
+        val destFile = resolveUploadName(destDir, fileName)
+        File(tmpFilePath).copyTo(destFile, overwrite = false)
+
+        val resp = json.encodeToString(OperationResp(true, destFile.absolutePath))
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp)
+    }
+
+    private fun resolveUploadName(dir: File, name: String): File {
+        val candidate = File(dir, name)
+        if (!candidate.exists()) return candidate
+        val dotIdx = name.lastIndexOf('.')
+        val stem = if (dotIdx > 0) name.substring(0, dotIdx) else name
+        val ext = if (dotIdx > 0) name.substring(dotIdx) else ""
+        var counter = 1
+        while (true) {
+            val newFile = File(dir, "$stem ($counter)$ext")
+            if (!newFile.exists()) return newFile
+            counter++
+        }
     }
 
     private fun getMimeType(fileName: String): String? {
@@ -233,6 +395,12 @@ private data class DirEntry(
     val hidden: Boolean,
     val readonly: Boolean,
     val extension: String,
+)
+
+@Serializable
+private data class OperationResp(
+    val success: Boolean,
+    val path: String,
 )
 
 @Serializable

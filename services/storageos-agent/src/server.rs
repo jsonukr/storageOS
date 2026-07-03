@@ -3,7 +3,8 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::extract::Multipart;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -54,6 +55,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/devices/pair", post(pair_device))
         .route("/devices/:id", get(get_device).patch(rename_device).delete(forget_device))
         .route("/devices/:id/forget", post(remote_forget))
+        .route("/mkdir", post(mkdir))
+        .route("/rename", post(rename))
+        .route("/entry", delete(delete_entry))
+        .route("/upload", post(upload))
         .route("/ws", get(ws_upgrade))
         .layer(cors)
         .with_state(state)
@@ -634,6 +639,216 @@ fn core_error_to_response(
             message: e.message,
         }),
     )
+}
+
+// --- File Operations ---
+
+#[derive(Deserialize)]
+struct MkdirRequest {
+    parent: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct OperationResponse {
+    success: bool,
+    path: String,
+}
+
+async fn mkdir(
+    Json(req): Json<MkdirRequest>,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::debug!(parent = %req.parent, name = %req.name, "Create folder requested");
+    let parent = req.parent;
+    let name = req.name;
+    let result = tokio::task::spawn_blocking(move || {
+        storageos_core::filesystem::create_folder(&parent, &name)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(crate::dto::ErrorDto {
+                code: "INTERNAL".to_string(),
+                message: format!("Task join error: {e}"),
+            }),
+        )
+    })?
+    .map_err(core_error_to_response)?;
+    Ok(Json(OperationResponse {
+        success: result.success,
+        path: result.path,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RenameEntryRequest {
+    path: String,
+    new_name: String,
+}
+
+async fn rename(
+    Json(req): Json<RenameEntryRequest>,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::debug!(path = %req.path, new_name = %req.new_name, "Rename requested");
+    let path = req.path;
+    let new_name = req.new_name;
+    let result = tokio::task::spawn_blocking(move || {
+        storageos_core::filesystem::rename_item(&path, &new_name)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(crate::dto::ErrorDto {
+                code: "INTERNAL".to_string(),
+                message: format!("Task join error: {e}"),
+            }),
+        )
+    })?
+    .map_err(core_error_to_response)?;
+    Ok(Json(OperationResponse {
+        success: result.success,
+        path: result.path,
+    }))
+}
+
+#[derive(Deserialize)]
+struct DeleteParams {
+    path: String,
+}
+
+async fn delete_entry(
+    Query(params): Query<DeleteParams>,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::debug!(path = %params.path, "Delete requested");
+    let path = params.path;
+    let result = tokio::task::spawn_blocking(move || {
+        storageos_core::filesystem::delete_item(&path)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(crate::dto::ErrorDto {
+                code: "INTERNAL".to_string(),
+                message: format!("Task join error: {e}"),
+            }),
+        )
+    })?
+    .map_err(core_error_to_response)?;
+    Ok(Json(OperationResponse {
+        success: result.success,
+        path: result.path,
+    }))
+}
+
+#[derive(Deserialize)]
+struct UploadParams {
+    path: String,
+}
+
+async fn upload(
+    Query(params): Query<UploadParams>,
+    mut multipart: Multipart,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::debug!(path = %params.path, "Upload requested");
+
+    let dest_dir = std::path::Path::new(&params.path);
+    if !dest_dir.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(crate::dto::ErrorDto {
+                code: "INVALID_ARGUMENT".to_string(),
+                message: format!("Destination is not a directory: {}", params.path),
+            }),
+        ));
+    }
+
+    let mut last_path = String::new();
+    let mut total_written: u64 = 0;
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(crate::dto::ErrorDto {
+                code: "INVALID_ARGUMENT".to_string(),
+                message: format!("Multipart error: {e}"),
+            }),
+        )
+    })? {
+        let file_name = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "upload".to_string());
+
+        let dest_file = resolve_upload_name(dest_dir, &file_name);
+        last_path = dest_file.to_string_lossy().into_owned();
+
+        let mut out = tokio::fs::File::create(&dest_file).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::dto::ErrorDto {
+                    code: "IO_ERROR".to_string(),
+                    message: format!("Failed to create file: {e}"),
+                }),
+            )
+        })?;
+
+        let mut bytes_written: u64 = 0;
+        while let Some(chunk) = field.chunk().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::dto::ErrorDto {
+                    code: "IO_ERROR".to_string(),
+                    message: format!("Failed to read upload data: {e}"),
+                }),
+            )
+        })? {
+            use tokio::io::AsyncWriteExt;
+            out.write_all(&chunk).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(crate::dto::ErrorDto {
+                        code: "IO_ERROR".to_string(),
+                        message: format!("Failed to write file: {e}"),
+                    }),
+                )
+            })?;
+            bytes_written += chunk.len() as u64;
+        }
+
+        total_written += bytes_written;
+        tracing::info!(path = %last_path, size = bytes_written, "File uploaded");
+    }
+
+    Ok(Json(OperationResponse {
+        success: true,
+        path: last_path,
+    }))
+}
+
+fn resolve_upload_name(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string());
+    let ext = std::path::Path::new(name)
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    let mut counter = 1u32;
+    loop {
+        let new_name = format!("{stem} ({counter}){ext}");
+        let path = dir.join(&new_name);
+        if !path.exists() {
+            return path;
+        }
+        counter += 1;
+    }
 }
 
 // --- WebSocket ---

@@ -33,6 +33,9 @@ pub fn run() {
             commands::thumbnail::get_thumbnail,
             commands::agent::launch_agent,
             commands::agent::agent_port,
+            commands::remote_transfer::remote_download,
+            commands::remote_transfer::remote_upload,
+            commands::pick_files::pick_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running StorageOS");

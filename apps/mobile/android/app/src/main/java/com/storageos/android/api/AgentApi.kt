@@ -7,6 +7,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import com.storageos.android.ui.devices.DeviceRecord
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Query
@@ -25,6 +26,15 @@ interface AgentApi {
 
     @POST("/devices/pair")
     suspend fun pairDevice(@Body request: PairDeviceRequest): PairDeviceResponse
+
+    @POST("/mkdir")
+    suspend fun mkdir(@Body request: MkdirRequest): OperationResponse
+
+    @POST("/rename")
+    suspend fun rename(@Body request: RenameRequest): OperationResponse
+
+    @DELETE("/entry")
+    suspend fun deleteEntry(@Query("path") path: String): OperationResponse
 
     @GET("/devices")
     suspend fun listDevices(): List<DeviceRecord>

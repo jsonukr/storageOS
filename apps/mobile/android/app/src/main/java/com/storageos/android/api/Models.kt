@@ -56,6 +56,24 @@ data class PairDeviceRequest(
 )
 
 @Serializable
+data class MkdirRequest(
+    val parent: String,
+    val name: String,
+)
+
+@Serializable
+data class RenameRequest(
+    val path: String,
+    @SerialName("new_name") val newName: String,
+)
+
+@Serializable
+data class OperationResponse(
+    val success: Boolean,
+    val path: String,
+)
+
+@Serializable
 data class PairDeviceResponse(
     @SerialName("device_id") val deviceId: String,
     @SerialName("system_name") val systemName: String,

@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef, useEffect } from "react";
-import { useExplorerStore, getParentPath } from "../stores/explorer";
+import { useExplorerStore, getParentPath, isImageFile } from "../stores/explorer";
 import { useTransferStore } from "../stores/transfer";
 import { NavigationPanel } from "../components/NavigationPanel";
 import { PropertiesPanel } from "../components/PropertiesPanel";
@@ -7,7 +7,9 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import type { DirectoryEntry } from "@/lib/tauri";
 import type { SortField } from "@/services/ExplorerSortService";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { getThumbnail } from "@/lib/tauri";
+import { downloadDir } from "@tauri-apps/api/path";
+import { getThumbnail, pickFiles } from "@/lib/tauri";
+import { ExplorerService } from "@/services/ExplorerService";
 
 // ── Thumbnail cache + load queue ──
 
@@ -126,6 +128,25 @@ export default function Explorer() {
   const canGoForward = forwardStack.length > 0;
   const canGoUp = currentPath !== null && getParentPath(currentPath) !== null;
 
+  const handleUpload = useCallback(async () => {
+    const dest = useExplorerStore.getState().currentPath;
+    const remote = useExplorerStore.getState().remoteDevice;
+    if (!dest) return;
+
+    const files = await pickFiles();
+    if (files.length === 0) return;
+
+    if (remote) {
+      for (const file of files) {
+        ExplorerService.remoteUploadToDevice(remote.address, file.path, dest, file.name, file.size);
+      }
+    } else {
+      for (const file of files) {
+        ExplorerService.uploadToLocal(file.path, dest, file.name, file.size);
+      }
+    }
+  }, []);
+
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <Notification />
@@ -161,13 +182,13 @@ export default function Explorer() {
 
         {/* Actions */}
         <div className="flex items-center gap-0.5">
-          <ToolbarButton label="New Folder" disabled={currentPath === null || !!remoteDevice} onClick={() => useExplorerStore.getState().openNewFolderDialog()}>
+          <ToolbarButton label="New Folder" disabled={currentPath === null} onClick={() => useExplorerStore.getState().openNewFolderDialog()}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5l1 1H11.5c.55 0 1 .45 1 1V10.5c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V3.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               <path d="M7 6v4M5 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
           </ToolbarButton>
-          <ToolbarButton label="Upload">
+          <ToolbarButton label="Upload" disabled={currentPath === null} onClick={handleUpload}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M7 9V3M4.5 5.5L7 3l2.5 2.5M2.5 10v1.5h9V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -253,6 +274,7 @@ export default function Explorer() {
       <DeleteConfirmDialog />
       <PasteConflictDialog />
       <ContextMenu />
+      <ImagePreview />
     </div>
   );
 }
@@ -358,6 +380,62 @@ function FileArea({ viewMode }: { viewMode: string }) {
     showContextMenu(e.clientX, e.clientY, null);
   };
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const s = useExplorerStore.getState();
+    const sel = s.selectedEntries;
+    const ctrl = e.ctrlKey || e.metaKey;
+
+    if (e.key === "Delete" && sel.length > 0) {
+      e.preventDefault();
+      s.confirmDelete(sel);
+    } else if (e.key === "F2" && sel.length === 1) {
+      e.preventDefault();
+      s.startRename(sel[0]);
+    } else if (ctrl && e.key === "c" && sel.length > 0) {
+      e.preventDefault();
+      s.copyEntries(sel);
+    } else if (ctrl && e.key === "x" && sel.length > 0) {
+      e.preventDefault();
+      s.cutEntries(sel);
+    } else if (ctrl && e.key === "v") {
+      e.preventDefault();
+      s.pasteEntries();
+    } else if (ctrl && e.key === "h") {
+      e.preventDefault();
+      s.toggleShowHiddenItems();
+    } else if (ctrl && e.key === "a") {
+      e.preventDefault();
+      const visible = s.searchQuery ? (s.searchResults ?? []) : s.entries;
+      const filtered = s.showHiddenItems ? visible : visible.filter((en) => !en.hidden);
+      if (filtered.length > 0) {
+        s.selectEntry(filtered[0]);
+        if (filtered.length > 1) s.selectEntry(filtered[filtered.length - 1], false, true);
+      }
+    } else if (e.key === "Enter" && sel.length === 1) {
+      e.preventDefault();
+      s.openEntry(sel[0]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      if (s.searchQuery) {
+        s.clearSearch();
+      } else {
+        s.selectEntry(null);
+      }
+    } else if (e.key === "F5") {
+      e.preventDefault();
+      s.refresh();
+    } else if (e.altKey && e.key === "ArrowLeft") {
+      e.preventDefault();
+      s.goBack();
+    } else if (e.altKey && e.key === "ArrowRight") {
+      e.preventDefault();
+      s.goForward();
+    } else if (e.altKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      s.goUp();
+    }
+  }, []);
+
   const renderContent = () => {
     if (loading) return <LoadingState />;
     if (error) return <ErrorState message={error} />;
@@ -380,6 +458,7 @@ function FileArea({ viewMode }: { viewMode: string }) {
       className="flex-1 flex flex-col overflow-hidden bg-surface min-w-0 outline-none"
       onClick={() => { selectEntry(null); hideContextMenu(); }}
       onContextMenu={handleBackgroundContext}
+      onKeyDown={handleKeyDown}
     >
       {viewMode === "details" && <DetailsHeader />}
 
@@ -1024,7 +1103,7 @@ function DeleteConfirmDialog() {
     <DialogOverlay onClose={cancel}>
       <div className="flex flex-col gap-3">
         <h3 className="text-[13px] font-semibold text-text-primary">Delete</h3>
-        <p className="text-[12px] text-text-secondary leading-relaxed">
+        <p className="text-[12px] text-text-secondary leading-relaxed" style={{ overflowWrap: "anywhere" }}>
           {isSingle ? (
             <>Are you sure you want to permanently delete <strong className="text-text-primary">"{targets[0].name}"</strong>?
             {targets[0].is_directory && " This will delete all contents inside the folder."}</>
@@ -1093,7 +1172,7 @@ function PasteConflictDialog() {
           <p className="text-[11.5px] text-text-tertiary mb-1" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
             Pasting to current folder
           </p>
-          <p className="text-[14px] font-semibold text-text-primary leading-snug" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+          <p className="text-[14px] font-semibold text-text-primary leading-snug" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", overflowWrap: "anywhere" }}>
             The destination has a file named "{conflict.fileName}"
           </p>
         </div>
@@ -1528,6 +1607,7 @@ function ContextMenu() {
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
   const setEntryHidden = useExplorerStore((s) => s.setEntryHidden);
   const setEntryReadonly = useExplorerStore((s) => s.setEntryReadonly);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1550,7 +1630,8 @@ function ContextMenu() {
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[160px] rounded-lg border border-border bg-surface shadow-lg py-1 text-[12px]"
+      role="menu"
+      className="fixed z-50 min-w-[180px] rounded-lg border border-border bg-surface shadow-lg py-1 text-[12px]"
       style={{ left: x, top: y }}
     >
       {entry ? (
@@ -1558,31 +1639,55 @@ function ContextMenu() {
           {entry.is_directory && (
             <ContextMenuItem
               label="Open"
+              shortcut="Enter"
               onAction={() => { openEntry(entry); hide(); }}
+            />
+          )}
+          {isImageFile(entry) && (
+            <ContextMenuItem
+              label="Preview"
+              shortcut="Enter"
+              onAction={() => { openEntry(entry); hide(); }}
+            />
+          )}
+          {remoteDevice && !entry.is_directory && (
+            <ContextMenuItem
+              label="Download"
+              onAction={() => {
+                downloadDir().then((dir) => {
+                  ExplorerService.remoteDownloadFile(remoteDevice.address, entry.full_path, dir, entry.name, entry.size);
+                });
+                hide();
+              }}
             />
           )}
           <ContextMenuDivider />
           <ContextMenuItem
             label="Copy"
+            shortcut="Ctrl+C"
             onAction={() => { copyEntries(targets); hide(); }}
           />
           <ContextMenuItem
             label="Cut"
+            shortcut="Ctrl+X"
             onAction={() => { cutEntries(targets); hide(); }}
           />
           <ContextMenuItem
             label="Paste"
+            shortcut="Ctrl+V"
             disabled={!canPaste}
             onAction={() => { pasteEntries(); hide(); }}
           />
           <ContextMenuDivider />
           <ContextMenuItem
             label="Rename"
+            shortcut="F2"
             onAction={() => { startRename(entry); hide(); }}
           />
           <ContextMenuDivider />
           <ContextMenuItem
             label={allHidden ? "Unhide" : "Hide"}
+            shortcut="Ctrl+H"
             onAction={() => { setEntryHidden(targets, !allHidden); hide(); }}
           />
           <ContextMenuItem
@@ -1592,6 +1697,7 @@ function ContextMenu() {
           <ContextMenuDivider />
           <ContextMenuItem
             label="Delete"
+            shortcut="Del"
             danger
             onAction={() => { confirmDelete(targets); hide(); }}
           />
@@ -1602,9 +1708,28 @@ function ContextMenu() {
             label="New Folder"
             onAction={() => { openNewFolderDialog(); hide(); }}
           />
+          <ContextMenuItem
+            label="Upload files"
+            onAction={() => {
+              hide();
+              const dest = useExplorerStore.getState().currentPath;
+              const remote = useExplorerStore.getState().remoteDevice;
+              if (!dest) return;
+              pickFiles().then((files) => {
+                for (const file of files) {
+                  if (remote) {
+                    ExplorerService.remoteUploadToDevice(remote.address, file.path, dest, file.name, file.size);
+                  } else {
+                    ExplorerService.uploadToLocal(file.path, dest, file.name, file.size);
+                  }
+                }
+              });
+            }}
+          />
           <ContextMenuDivider />
           <ContextMenuItem
             label="Paste"
+            shortcut="Ctrl+V"
             disabled={!canPaste}
             onAction={() => { pasteEntries(); hide(); }}
           />
@@ -1614,18 +1739,20 @@ function ContextMenu() {
   );
 }
 
-function ContextMenuItem({ label, onAction, danger = false, disabled = false }: { label: string; onAction: () => void; danger?: boolean; disabled?: boolean }) {
+function ContextMenuItem({ label, shortcut, onAction, danger = false, disabled = false }: { label: string; shortcut?: string; onAction: () => void; danger?: boolean; disabled?: boolean }) {
   return (
     <button
+      role="menuitem"
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); if (!disabled) onAction(); }}
       disabled={disabled}
-      className={`w-full text-left px-3 py-1.5 transition-colors disabled:opacity-35 disabled:pointer-events-none ${
+      className={`flex items-center justify-between w-full text-left px-3 py-1.5 transition-colors disabled:opacity-35 disabled:pointer-events-none ${
         danger
           ? "text-danger hover:bg-danger/10"
           : "text-text-primary hover:bg-surface-hover"
       }`}
     >
-      {label}
+      <span>{label}</span>
+      {shortcut && <span className="text-[11px] text-text-tertiary ml-6">{shortcut}</span>}
     </button>
   );
 }
@@ -1634,14 +1761,229 @@ function ContextMenuDivider() {
   return <div className="h-px bg-border my-1 mx-2" />;
 }
 
+// ── Image Preview ──
+
+function ImagePreview() {
+  const images = useExplorerStore((s) => s.previewImages);
+  const index = useExplorerStore((s) => s.previewIndex);
+  const close = useExplorerStore((s) => s.closeImagePreview);
+  const next = useExplorerStore((s) => s.previewNext);
+  const prev = useExplorerStore((s) => s.previewPrev);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
+
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const active = images.length > 0 && index >= 0;
+  const entry = active ? images[index] : null;
+
+  const getImageSrc = useCallback((e: { full_path: string }): string => {
+    if (remoteDevice) {
+      return `http://${remoteDevice.address}/download?path=${encodeURIComponent(e.full_path)}`;
+    }
+    return convertFileSrc(e.full_path);
+  }, [remoteDevice]);
+
+  const src = entry ? getImageSrc(entry) : "";
+
+  useEffect(() => {
+    if (!active) return;
+    setLoading(true);
+    setError(false);
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, [src, active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const preload = (i: number) => {
+      if (i >= 0 && i < images.length) {
+        const img = new Image();
+        img.src = getImageSrc(images[i]);
+      }
+    };
+    preload(index + 1);
+    preload(index - 1);
+  }, [index, images, getImageSrc, active]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !active) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setScale((s) => {
+        const n = Math.min(Math.max(s * delta, 0.25), 10);
+        if (n <= 1.05 && n >= 0.95) {
+          setOffset({ x: 0, y: 0 });
+          return 1;
+        }
+        return n;
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [active]);
+
+  if (!active || !entry) return null;
+
+  const resetTransform = () => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  };
+
+  const goNext = () => { resetTransform(); next(); };
+  const goPrev = () => { resetTransform(); prev(); };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "ArrowRight") { goNext(); return; }
+    if (e.key === "ArrowLeft") { goPrev(); return; }
+    if (e.key === "+" || e.key === "=") { setScale((s) => Math.min(s * 1.25, 10)); return; }
+    if (e.key === "-") { setScale((s) => Math.max(s / 1.25, 0.25)); return; }
+    if (e.key === "0") { resetTransform(); return; }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || scale <= 1) return;
+    setDragging(true);
+    setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!dragging) return;
+    setOffset({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+  };
+
+  const handleMouseUp = () => setDragging(false);
+
+  const handleDoubleClick = () => {
+    if (scale > 1.05) {
+      resetTransform();
+    } else {
+      setScale(3);
+    }
+  };
+
+  const handleImageLoad = () => { setLoading(false); setError(false); };
+  const handleImageError = () => { setLoading(false); setError(true); };
+
+  const hasNext = index < images.length - 1;
+  const hasPrev = index > 0;
+
+  return (
+    <div
+      ref={(el) => { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (el) el.focus(); }}
+      className="fixed inset-0 z-[60] flex flex-col bg-black/95 select-none outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+    >
+      {/* Top bar */}
+      <div className="flex items-center h-10 px-3 bg-black/60 shrink-0">
+        <span className="text-[13px] text-white/90 truncate flex-1" style={{ overflowWrap: "anywhere" }}>
+          {entry.name}
+        </span>
+        <span className="text-[12px] text-white/50 mx-3 shrink-0">
+          {index + 1} / {images.length}
+        </span>
+        <span className="text-[12px] text-white/50 mr-3 shrink-0">
+          {scale !== 1 ? `${Math.round(scale * 100)}%` : "Fit"}
+        </span>
+        <button
+          onClick={close}
+          className="flex items-center justify-center w-8 h-8 rounded text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Image area */}
+      <div
+        className="flex-1 overflow-hidden relative"
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "default" }}
+      >
+        {loading && !error && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          </div>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+              <line x1="4" y1="4" x2="20" y2="20" />
+            </svg>
+            <span className="text-white/40 text-[13px]">Failed to load image</span>
+          </div>
+        )}
+
+        <img
+          key={entry.full_path}
+          src={src}
+          alt={entry.name}
+          draggable={false}
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+          className="absolute top-1/2 left-1/2 max-w-full max-h-full object-contain transition-opacity duration-200"
+          style={{
+            transform: `translate(-50%, -50%) scale(${scale}) translate(${offset.x / scale}px, ${offset.y / scale}px)`,
+            opacity: loading || error ? 0 : 1,
+            maxWidth: scale <= 1 ? "100%" : "none",
+            maxHeight: scale <= 1 ? "100%" : "none",
+          }}
+        />
+
+        {/* Previous button */}
+        {hasPrev && (
+          <button
+            onClick={(e) => { e.stopPropagation(); goPrev(); }}
+            className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 text-white/70 hover:bg-black/60 hover:text-white transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <polyline points="12,4 6,10 12,16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+
+        {/* Next button */}
+        {hasNext && (
+          <button
+            onClick={(e) => { e.stopPropagation(); goNext(); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 text-white/70 hover:bg-black/60 hover:text-white transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <polyline points="8,4 14,10 8,16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DialogOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={onClose}
     >
       <div
-        className="w-[340px] rounded-xl border border-border bg-surface p-5 shadow-xl"
+        className="w-[360px] rounded-lg border border-border bg-surface p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {children}
@@ -1886,7 +2228,7 @@ function ToolbarButton({
 }) {
   return (
     <button
-      className="rounded p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-35 disabled:pointer-events-none transition-colors"
+      className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-35 disabled:pointer-events-none transition-colors"
       aria-label={label}
       disabled={disabled}
       title={label}
@@ -1898,7 +2240,7 @@ function ToolbarButton({
 }
 
 function ToolbarDivider() {
-  return <div className="w-px h-5 bg-border mx-0.5 shrink-0" />;
+  return <div className="w-px h-4 bg-border mx-1 shrink-0" />;
 }
 
 

@@ -113,6 +113,13 @@ export interface AgentLaunchResult {
   readonly port: number;
 }
 
+/** A file selected via the native file picker. */
+export interface PickedFile {
+  readonly path: string;
+  readonly name: string;
+  readonly size: number;
+}
+
 /** Progress payload emitted during file transfers. */
 export interface TransferProgressPayload {
   readonly transferId: string;

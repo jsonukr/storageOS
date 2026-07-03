@@ -5,13 +5,20 @@ import { ExplorerService } from "@/services/ExplorerService";
 import { ExplorerSortService } from "@/services/ExplorerSortService";
 import type { SortField, SortDirection, SortConfig } from "@/services/ExplorerSortService";
 import { ClipboardService } from "@/services/clipboard";
-import { TransferService } from "@/services/transfer";
+import type { ClipboardItem } from "@/services/clipboard";
+import { TransferService, FolderTransferService } from "@/services/transfer";
 
 type ViewMode = "extra_large" | "large" | "medium" | "small" | "list" | "details";
 
 const VIEW_STORAGE_KEY = "storageos:viewMode";
 const HIDDEN_ITEMS_KEY = "storageos:showHiddenItems";
 const FILE_EXT_KEY = "storageos:showFileExtensions";
+
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp"]);
+
+function isImageFile(entry: DirectoryEntry): boolean {
+  return !entry.is_directory && IMAGE_EXTENSIONS.has((entry.extension ?? "").toLowerCase());
+}
 
 const initialSortConfig = ExplorerSortService.loadConfig();
 const initialShowHiddenItems = localStorage.getItem(HIDDEN_ITEMS_KEY) === "true";
@@ -101,6 +108,7 @@ interface ExplorerState {
     destDir: string;
     fileName: string;
     isCut: boolean;
+    providerId: string;
     remainingItems: Array<{ path: string }>;
   } | null;
   resolvePasteConflict: (resolution: "replace" | "keep_both" | "cancel") => void;
@@ -132,6 +140,13 @@ interface ExplorerState {
   remoteDevice: { address: string; name: string } | null;
   browseRemoteDevice: (address: string, name: string) => void;
   exitRemoteBrowse: () => void;
+
+  previewImages: DirectoryEntry[];
+  previewIndex: number;
+  openImagePreview: (entry: DirectoryEntry) => void;
+  closeImagePreview: () => void;
+  previewNext: () => void;
+  previewPrev: () => void;
 }
 
 let searchGeneration = 0;
@@ -232,7 +247,12 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   },
 
   openEntry: (entry: DirectoryEntry) => {
-    if (!entry.is_directory) return;
+    if (!entry.is_directory) {
+      if (isImageFile(entry)) {
+        get().openImagePreview(entry);
+      }
+      return;
+    }
     const { currentPath } = get();
     const history = currentPath !== null
       ? [...get().historyStack, currentPath]
@@ -316,11 +336,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   clearOperationError: () => set({ operationError: null }),
 
   createFolder: async (name: string): Promise<boolean> => {
-    const { currentPath } = get();
+    const { currentPath, remoteDevice } = get();
     if (currentPath === null) return false;
     set({ operationLoading: true, operationError: null });
     try {
-      await ExplorerService.createFolder(currentPath, name);
+      if (remoteDevice) {
+        await ExplorerService.remoteCreateFolder(remoteDevice.address, currentPath, name);
+      } else {
+        await ExplorerService.createFolder(currentPath, name);
+      }
       set({ operationLoading: false, newFolderDialogOpen: false });
       loadDirectory(currentPath, set);
       return true;
@@ -334,9 +358,14 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   },
 
   renameEntry: async (entry: DirectoryEntry, newName: string): Promise<boolean> => {
+    const { remoteDevice } = get();
     set({ operationLoading: true, operationError: null });
     try {
-      await ExplorerService.rename(entry.full_path, newName);
+      if (remoteDevice) {
+        await ExplorerService.remoteRename(remoteDevice.address, entry.full_path, newName);
+      } else {
+        await ExplorerService.rename(entry.full_path, newName);
+      }
       set({ operationLoading: false, renameTarget: null });
       const { currentPath } = get();
       if (currentPath) loadDirectory(currentPath, set);
@@ -353,10 +382,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   deleteEntry: async (): Promise<boolean> => {
     const targets = get().deleteTargets;
     if (targets.length === 0) return false;
+    const { remoteDevice } = get();
     set({ operationLoading: true, operationError: null });
     try {
       for (const entry of targets) {
-        await ExplorerService.delete(entry.full_path);
+        if (remoteDevice) {
+          await ExplorerService.remoteDelete(remoteDevice.address, entry.full_path);
+        } else {
+          await ExplorerService.delete(entry.full_path);
+        }
       }
       set({ operationLoading: false, deleteTargets: [], selectedEntries: [] });
       const { currentPath } = get();
@@ -436,9 +470,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   clipboardOperation: "copy" as const,
 
   copyEntries: (entries: DirectoryEntry[]) => {
+    const remote = get().remoteDevice;
+    const providerId = remote ? `remote:${remote.address}` : "local";
     ClipboardService.copy(
       entries.map((e) => ({
-        providerId: "local",
+        providerId,
         path: e.full_path,
         type: e.is_directory ? "directory" as const : "file" as const,
         size: e.size,
@@ -450,9 +486,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   },
 
   cutEntries: (entries: DirectoryEntry[]) => {
+    const remote = get().remoteDevice;
+    const providerId = remote ? `remote:${remote.address}` : "local";
     ClipboardService.cut(
       entries.map((e) => ({
-        providerId: "local",
+        providerId,
         path: e.full_path,
         type: e.is_directory ? "directory" as const : "file" as const,
         size: e.size,
@@ -464,20 +502,31 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   },
 
   pasteEntries: (overwrite?: boolean, newName?: string) => {
-    const { currentPath, pasteConflict, entries } = get();
+    const { currentPath, pasteConflict, entries, remoteDevice } = get();
     if (!currentPath) return;
 
-    let items: Array<{ path: string }>;
+    let clipboardItems: readonly ClipboardItem[];
     let isCut: boolean;
 
     if (pasteConflict && (overwrite || newName)) {
-      items = [{ path: pasteConflict.sourcePath }, ...pasteConflict.remainingItems];
+      const resumeItems = ClipboardService.getItems().filter(
+        (it) => it.path === pasteConflict.sourcePath || pasteConflict.remainingItems.some((r) => r.path === it.path),
+      );
+      clipboardItems = resumeItems.length > 0 ? resumeItems : [{ providerId: pasteConflict.providerId, path: pasteConflict.sourcePath, type: "file" as const, size: 0, name: pasteConflict.fileName }];
       isCut = pasteConflict.isCut;
       set({ pasteConflict: null });
     } else {
       if (!ClipboardService.hasItems()) return;
-      items = [...ClipboardService.getItems()];
+      clipboardItems = ClipboardService.getItems();
       isCut = ClipboardService.isCutOperation();
+    }
+
+    const sourceIsRemote = clipboardItems.length > 0 && clipboardItems[0].providerId.startsWith("remote:");
+    const sourceAddress = sourceIsRemote ? clipboardItems[0].providerId.substring(7) : null;
+    const destIsRemote = !!remoteDevice;
+
+    if (isCut && (sourceIsRemote || destIsRemote)) {
+      isCut = false;
     }
 
     const existingNames = new Set(entries.map((e) => e.name));
@@ -486,8 +535,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     let queued = 0;
     let skippedSameDir = 0;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    for (let i = 0; i < clipboardItems.length; i++) {
+      const item = clipboardItems[i];
       const ow = i === 0 ? firstItemOverwrite : undefined;
       const nn = i === 0 ? firstItemNewName : undefined;
       const fileName = nn ?? item.path.split(/[\\/]/).pop() ?? "file";
@@ -507,19 +556,46 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
             destDir: currentPath,
             fileName,
             isCut,
-            remainingItems: items.slice(i + 1).map((it) => ({ path: it.path })),
+            providerId: item.providerId,
+            remainingItems: clipboardItems.slice(i + 1).map((it) => ({ path: it.path })),
           },
         });
         return;
       }
 
-      const transferType = isCut ? "move" : "copy";
-      const job = TransferService.addJob(transferType as "copy" | "move", fileName, item.path, currentPath, 0);
-      TransferService.setStatus(job.id, "running");
-      startTransfer(job.id, item.path, currentPath, transferType, ow, nn).catch(() =>
-        TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
-      );
-      queued++;
+      if (sourceIsRemote && !destIsRemote) {
+        if (item.type === "directory") {
+          FolderTransferService.startRemoteToLocal(sourceAddress!, item.path, currentPath, fileName);
+        } else {
+          ExplorerService.remoteDownloadFile(sourceAddress!, item.path, currentPath, fileName, item.size);
+        }
+        queued++;
+      } else if (!sourceIsRemote && destIsRemote) {
+        if (item.type === "directory") {
+          FolderTransferService.startLocalToRemote(remoteDevice!.address, item.path, currentPath, fileName);
+        } else {
+          ExplorerService.remoteUploadToDevice(remoteDevice!.address, item.path, currentPath, fileName, item.size);
+        }
+        queued++;
+      } else if (!sourceIsRemote && !destIsRemote) {
+        const transferType = isCut ? "move" : "copy";
+        const job = TransferService.addJob(transferType as "copy" | "move", fileName, item.path, currentPath, 0);
+        TransferService.setStatus(job.id, "running");
+        startTransfer(job.id, item.path, currentPath, transferType, ow, nn).catch(() =>
+          TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
+        );
+        queued++;
+      } else if (sourceIsRemote && destIsRemote && sourceAddress === remoteDevice!.address) {
+        if (item.type === "directory") {
+          FolderTransferService.startRemoteSameDevice(remoteDevice!.address, item.path, currentPath, fileName);
+        } else {
+          ExplorerService.remoteCopyOnDevice(remoteDevice!.address, item.path, currentPath, fileName, item.size);
+        }
+        queued++;
+      } else {
+        set({ notification: "Copying between two different remote devices is not supported" });
+        return;
+      }
     }
 
     if (skippedSameDir > 0 && queued === 0) {
@@ -529,7 +605,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     }
 
     if (queued > 0) {
-      set({ notification: `${isCut ? "Moving" : "Copying"} ${queued} item(s)...` });
+      const action = isCut ? "Moving" : (sourceIsRemote && !destIsRemote ? "Downloading" : (!sourceIsRemote && destIsRemote ? "Uploading" : (sourceIsRemote && destIsRemote ? "Copying on device" : "Copying")));
+      set({ notification: `${action} ${queued} item(s)...` });
       if (isCut) ClipboardService.clear();
     }
   },
@@ -646,6 +723,33 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   exitRemoteBrowse: () => {
     set({ remoteDevice: null, currentPath: null, entries: [], historyStack: [], forwardStack: [], selectedEntries: [], error: null });
   },
+
+  previewImages: [],
+  previewIndex: -1,
+  openImagePreview: (entry: DirectoryEntry) => {
+    const { entries, searchResults } = get();
+    const list = searchResults ?? entries;
+    const images = list.filter(isImageFile);
+    const index = images.findIndex((e) => e.full_path === entry.full_path);
+    if (index >= 0) {
+      set({ previewImages: images, previewIndex: index });
+    }
+  },
+  closeImagePreview: () => {
+    set({ previewImages: [], previewIndex: -1 });
+  },
+  previewNext: () => {
+    const { previewIndex, previewImages } = get();
+    if (previewIndex < previewImages.length - 1) {
+      set({ previewIndex: previewIndex + 1 });
+    }
+  },
+  previewPrev: () => {
+    const { previewIndex } = get();
+    if (previewIndex > 0) {
+      set({ previewIndex: previewIndex - 1 });
+    }
+  },
 }));
 
 onBridgeEvent("search:progress", (payload) => {
@@ -684,6 +788,7 @@ onBridgeEvent("transfer:progress", (payload) => {
           destDir: job.destination,
           fileName: job.name,
           isCut: job.type === "move",
+          providerId: "local",
           remainingItems: [],
         },
       });
@@ -762,4 +867,4 @@ if ((window as any).__storageos_keydown) {
 };
 document.addEventListener("keydown", (window as any).__storageos_keydown);
 
-export { getParentPath };
+export { getParentPath, isImageFile };

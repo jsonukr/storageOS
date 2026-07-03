@@ -14,4 +14,6 @@ pub mod list_directory;
 pub mod list_drives;
 pub mod search;
 pub mod transfer;
+pub mod pick_files;
+pub mod remote_transfer;
 pub mod thumbnail;
