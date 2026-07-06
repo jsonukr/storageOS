@@ -14,6 +14,7 @@ import type {
   AgentConnectionState,
   AgentHealthResponse,
   AgentConnectionInfo,
+  RelayStatus,
 } from "./types";
 import type { LocalDriveInfo, DirectoryEntry } from "@/lib/tauri";
 
@@ -32,6 +33,7 @@ export class AgentClient {
   private agentUptime: number | null = null;
   private lastError: string | null = null;
   private lastHealthCheck: number | null = null;
+  private relayStatus: RelayStatus = "disabled";
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private listeners: Set<StateListener> = new Set();
   private launchAgent: (() => Promise<void>) | null = null;
@@ -58,6 +60,7 @@ export class AgentClient {
       agentUptime: this.agentUptime,
       lastError: this.lastError,
       lastHealthCheck: this.lastHealthCheck,
+      relayStatus: this.relayStatus,
     };
   }
 
@@ -138,6 +141,7 @@ export class AgentClient {
         this.agentUptime = data.uptime_secs;
         this.lastHealthCheck = Date.now();
         this.lastError = null;
+        this.relayStatus = data.relay_status ?? "disabled";
         return true;
       }
 

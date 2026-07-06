@@ -4,6 +4,335 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Product Milestone 5 — Cross-Network File Transport
+
+#### 2026-07-06 — PM5: Cross-Network File Transport (All 8 Phases)
+
+- **Protocol payloads** (`crates/storageos-core/src/protocol/payloads.rs`): 16 new protocol payload types
+  - Filesystem RPC: `CreateFolderRequest`, `RenameEntryRequest`, `DeleteEntryRequest`, `OperationResponse`, `SearchEntryRequest`, `SearchEntryResponse`, `ThumbnailRequest`, `ThumbnailResponse`
+  - Streaming: `DownloadRequest`, `DownloadReady`, `DownloadData`, `DownloadComplete`, `UploadStart`, `UploadReady`, `UploadData`, `UploadComplete`, `TransferError`
+
+- **Agent RPC dispatcher** (`services/storageos-agent/src/dispatcher.rs`): New module
+  - Maps 8 incoming protocol request types to storageos_core function calls
+  - Constructs protocol response Messages with request_id correlation
+
+- **Relay handle** (`services/storageos-agent/src/relay_handle.rs`): New module
+  - Clone-able handle for sending messages through relay WebSocket
+  - `request()`: send protocol message, wait for correlated response (30s timeout)
+  - `send_raw()`: fire-and-forget for streaming chunks
+  - Pending request tracking via HashMap<request_id, oneshot::Sender>
+
+- **Relay client rewrite** (`services/storageos-agent/src/relay.rs`): Major update
+  - Added outbound channel (mpsc) for external code to send messages through relay WebSocket
+  - Incoming message parsing + dispatch: Request messages → dispatcher → response sent back
+  - Response messages → matched to pending requests via request_id
+
+- **Relay proxy routes** (`services/storageos-agent/src/relay_proxy.rs`): New module, 9 endpoints
+  - `GET /relay/roots?device=` → RootsRequest → RootsResponse
+  - `GET /relay/directory?device=&path=` → DirectoryRequest → DirectoryResponse
+  - `POST /relay/mkdir?device=` → CreateFolderRequest → OperationResponse
+  - `POST /relay/rename?device=` → RenameRequest → OperationResponse
+  - `DELETE /relay/entry?device=&path=` → DeleteRequest → OperationResponse
+  - `GET /relay/search?device=&path=&query=` → SearchRequest → SearchResponse
+  - `GET /relay/thumbnail?device=&path=` → ThumbnailRequest → ThumbnailResponse (base64→bytes)
+  - `GET /relay/download?device=&path=` → DownloadRequest → DownloadData (base64→bytes)
+  - `POST /relay/upload?device=&path=` → UploadStart + UploadData chunks + UploadComplete
+
+- **Agent AppState** (`services/storageos-agent/src/server.rs`): Added `RelayHandle` field
+
+- **Desktop relay integration** (`apps/desktop/src/services/network/remoteFetch.ts`):
+  - `remoteFetch()`: When active transport is "relay", routes through `relayFetch()` to local agent `/relay/*` proxy
+  - `relayFetch()`: Rewrites URL to `http://127.0.0.1:19742/relay/{path}?device={deviceId}`
+  - `buildRemoteUrl()`: Returns relay-proxied URL when transport is relay
+  - ExplorerService completely unchanged — transport agnosticism at remoteFetch level
+
+- **Dependencies**: Added `base64 0.22`, `tokio-stream 0.1`, `bytes 1` to storageos-agent
+
+### Product Milestone 4 — Universal Connectivity
+
+#### 2026-07-06 — UC-007.1: Transport Integration & End-to-End Validation
+
+- **remoteFetch** (`apps/desktop/src/services/network/remoteFetch.ts`): Centralized remote HTTP request wrapper
+  - Automatic latency measurement and `recordSuccess`/`recordFailure` on every remote request
+  - Automatic failover: on network error or HTTP 5xx, re-evaluates best transport and retries once via new endpoint
+  - `buildRemoteUrl()`: URL construction through ConnectionManager for non-fetch consumers
+  - `recordTransferResult()`: health reporting for Tauri-bridge transfers
+  - Dev-mode debug logging: `[transport]` prefix with transport, score, latency, failure count, switches, retries
+
+- **ExplorerService integration** (`apps/desktop/src/services/ExplorerService.ts`): All remote methods migrated
+  - `listRemoteRoots`, `listRemoteDirectory` → `remoteFetch` with automatic health tracking
+  - `remoteCreateFolder`, `remoteRename`, `remoteDelete` → `remoteFetch`
+  - `remoteUpload` → `remoteFetch` (FormData)
+  - `remoteDownloadFile`, `remoteUploadToDevice` → `buildRemoteUrl` + `recordTransferResult`
+  - `remoteCopyOnDevice` → `remoteFetch` for both download and upload legs
+  - `remoteDownloadUrl` → `buildRemoteUrl`
+  - Removed direct `http://${address}` URL construction from all methods
+
+- **FolderTransferService integration** (`apps/desktop/src/services/transfer/FolderTransferService.ts`): All 3 transfer modes migrated
+  - `runRemoteToLocal`: `buildRemoteUrl` per file + `recordTransferResult` after each download
+  - `runLocalToRemote`: `buildRemoteUrl` per file + `recordTransferResult` after each upload
+  - `runRemoteSameDevice`: `remoteFetch` for download/upload cycle + `recordTransferResult`
+  - Removed `requireAddress()` function and direct `ConnectionManager` import
+
+- **Image preview integration** (`apps/desktop/src/pages/Explorer.tsx`): Health tracking for remote images
+  - `getImageSrc` now uses `buildRemoteUrl` instead of raw `ConnectionManager.getAddress`
+  - `onLoad` handler calls `recordTransferResult(deviceId, true, latencyMs)` with measured load time
+  - `onError` handler calls `recordTransferResult(deviceId, false)`
+
+- **Bug fix** (`apps/desktop/src/pages/Explorer.tsx`): Fixed `remote.address` → `remote.deviceId` in upload handler (2 occurrences)
+
+- **Network module exports** (`apps/desktop/src/services/network/index.ts`): Added `remoteFetch`, `buildRemoteUrl`, `recordTransferResult`
+
+- **Documentation** (`docs/architecture/Networking.md`): Added Section 5.6 "Request Integration (remoteFetch)"
+
+- **Build verification**: TypeScript clean (`tsc --noEmit`), all 4 Rust crates compile clean (no Rust changes), 60 tests pass (50 core + 10 agent), no regressions
+
+#### 2026-07-06 — UC-007.2: Relay End-to-End Integration Validation
+
+- **Comprehensive URL audit**: Analyzed 46 networking URL patterns across entire codebase (desktop, agent, relay)
+  - **Zero bypasses**: All remote device communication routes through `ConnectionManager.getAddress()` — no hardcoded IPs, no direct address construction outside the network layer
+  - 4 direct `fetch()` calls: all to `127.0.0.1:19742` (local agent, intentional by design)
+  - 9 `buildRemoteUrl()` usages: all resolve via ConnectionManager
+  - 2 WebSocket connections: relay URLs from config (not hardcoded)
+  - All `.address` field usage goes through device registry or ConnectionManager
+
+- **Relay capability analysis**: Audited relay server, relay client, and desktop integration end-to-end
+  - Relay server (`services/storageos-relay/`) exposes only `/health`, `/devices`, `/ws` — **no file operation routes**
+  - Relay routes WebSocket JSON protocol messages between agents — does NOT proxy HTTP requests
+  - Agent relay client (`relay.rs`) handles HELLO, ping/pong only — received text messages logged but not acted upon
+  - `remoteFetch()` constructs `http://{address}/{path}` URLs — relay server cannot serve these
+  - No relay endpoint is ever registered in agent's device endpoint list
+  - No HTTP-over-WebSocket tunneling exists in the codebase
+
+- **Cross-network capability assessment**:
+  - Works: Device presence/discovery (HELLO, heartbeat, `/devices` listing)
+  - Does NOT work: Browse, download, upload, CRUD, image preview, folder transfers — all require direct HTTP to target device
+
+- **Beta readiness: NO** — relay enables cross-network presence but NOT file operations. Devices on different networks can see each other but cannot perform any file operations. This is an architecture gap (not a bug) requiring either HTTP-over-WebSocket tunneling or relay HTTP proxying.
+
+- **No code changes** — audit-only task, no modifications to any files
+
+#### 2026-07-06 — UC-007: Automatic Transport Selection
+
+- **TransportSelector** (`apps/desktop/src/services/network/TransportSelector.ts`): Pure scoring engine for endpoint selection
+  - `scoreEndpoint()`: composite score from reachability (+100), priority bonus ((50-priority)*2), latency penalty (-0.1/ms), failure penalty (-15/failure, max 60), success rate weight (+30*rate)
+  - `selectBestEndpoint()`: highest-scoring reachable endpoint, falls back to highest-scoring unreachable
+  - `computeQuality()`: latency-based quality levels (excellent ≤50ms, good ≤150ms, fair ≤500ms, poor >500ms, offline)
+  - `getAvailableTransports()`: reachable endpoints sorted by score descending
+
+- **Endpoint health tracking** (`apps/desktop/src/services/network/types.ts`): Added `EndpointHealth` interface (latencyMs, failureCount, lastFailure, successCount, lastSuccess), `ConnectionQuality` type, `health` field on `DeviceEndpoint`
+
+- **ConnectionManager extensions** (`apps/desktop/src/services/network/ConnectionManager.ts`): Health-aware transport management
+  - `recordSuccess(deviceId, transport, latencyMs)`: updates health metrics, decays failure count by 1 (gradual recovery), re-evaluates active transport
+  - `recordFailure(deviceId, transport)`: increments failure count, marks unreachable after 3 consecutive failures, triggers failover via scoring algorithm
+  - `getConnectionQuality(deviceId)`: current quality level for active transport
+  - `getAvailableTransports(deviceId)`: reachable endpoints sorted by score
+  - `getEndpointHealth(deviceId, transport)`: raw health metrics for a specific transport
+  - `switchTransport(deviceId, transport)`: manual transport override
+  - `registerEndpoints()` preserves existing health data across endpoint refreshes
+
+- **StatusBar** (`apps/desktop/src/layouts/StatusBar.tsx`): Transport-aware connection display
+  - Shows "Connected via LAN" / "Connected via Relay" when browsing a remote device, with quality indicator dot
+  - Quality dot: green (excellent/good), yellow (fair), red (poor), gray (offline)
+  - Falls back to "LAN Connected" / "LAN" when no remote device active
+
+- **Devices page** (`apps/desktop/src/pages/Devices.tsx`): Per-device transport details
+  - `DeviceDetails` component: 5-column grid showing active transport with quality dot, available transports, latency, paired date, version
+  - `qualityDotColor()`, `formatLatency()` helper functions
+
+- **Network exports** (`apps/desktop/src/services/network/index.ts`): Added `selectBestEndpoint`, `scoreEndpoint`, `computeQuality`, `getAvailableTransports`, `ConnectionQuality`, `EndpointHealth`
+
+- **Documentation** (`docs/architecture/Networking.md`): Section 5 rewritten to "ConnectionManager & Transport Selection" covering health tracking, scoring formula, automatic failover, connection quality, key methods, UI integration
+
+- **Build verification**: TypeScript clean (`tsc --noEmit`), all 4 Rust crates compile clean (no Rust changes needed), 60 tests pass (50 core + 10 agent), no changes to existing browse/transfer functionality
+
+#### 2026-07-06 — UC-006: StorageOS Relay Server
+
+- **New service** (`services/storageos-relay/`): Independent Rust binary for routing StorageOS protocol messages between agents
+  - Tokio + Axum stack, depends on `storageos-core` for protocol types
+  - No persistence — purely in-memory connection state while devices are connected
+
+- **Connection registry** (`registry.rs`): Thread-safe in-memory device tracking
+  - `ConnectedDevice`: device_id, device_name, public_key, fingerprint, capabilities, transport, connected_at, last_seen, outbound sender channel
+  - `DevicePresence`: serializable view for the `/devices` HTTP endpoint
+  - `ConnectionRegistry` (`RwLock<HashMap>`): register, unregister, route_message, update_last_seen, stale_devices
+  - Max connections limit (default 1000) — rejects new connections when full
+  - Re-connection replaces existing entry (sends empty message to signal old connection)
+
+- **WebSocket handler** (`handler.rs`): Full client lifecycle management
+  - HELLO processing: 10s timeout for first message, must be HELLO kind, validates protocol version compatibility, validates non-empty device_id/public_key/fingerprint
+  - Message routing: parses only `destination` field from envelope, forwards raw JSON to destination device's outbound channel — does NOT inspect or modify payloads
+  - Messages addressed to "relay" or empty destination are silently consumed
+  - Heartbeat: accepts WS Ping, responds with Pong, updates last_seen on all activity
+  - Heartbeat timeout: configurable (default 90s), disconnects inactive clients
+  - Outbound forwarding: messages from other devices delivered via mpsc channel → WebSocket
+  - Disconnect tracking: logs specific reason (client_close, heartbeat_timeout, receive_error, stream_ended, replaced_by_new_connection, forward_send_error, outbound_channel_closed)
+
+- **HTTP server** (`server.rs`): Three endpoints
+  - `GET /health`: status, uptime_secs, version, connected_devices count
+  - `GET /devices`: list of connected devices with presence info
+  - `GET /ws`: WebSocket upgrade endpoint for agent connections
+  - CORS enabled (Access-Control-Allow-Origin: *)
+
+- **Configuration** (`config.rs`): CLI-configurable relay settings
+  - `--bind` (default `0.0.0.0`), `--port` (default 19800), `--heartbeat-timeout` (default 90s), `--max-connections` (default 1000), `--log-level` (default `info`)
+  - `RelayConfig` struct with defaults from storageos-core constants
+
+- **Stale connection reaper** (`main.rs`): Background task runs at `heartbeat_timeout / 2` interval, disconnects devices whose `last_seen` exceeds the timeout
+
+- **Core constants** (`crates/storageos-core/src/config/constants.rs`): Added `DEFAULT_RELAY_PORT` (19800), `RELAY_HEARTBEAT_TIMEOUT_SECS` (90), `RELAY_MAX_CONNECTIONS` (1000)
+
+- **Dependencies**: tokio, axum 0.7, storageos-core, tracing, tracing-subscriber, serde, serde_json, tower-http 0.6, futures-util 0.3
+
+- **Build verification**: All 4 Rust crates compile clean (storageos-core, storageos-agent, storageos-desktop, storageos-relay), TypeScript clean, 60 tests pass, no changes to existing agent/desktop/LAN functionality
+
+#### 2026-07-06 — UC-005: StorageOS Relay Client
+
+- **Relay configuration types** (`crates/storageos-core/src/networking/mod.rs`): Added `RelayState` enum (Disabled, Disconnected, Connecting, Connected, Failed) and `RelayConfig` struct (url, heartbeat_interval_secs, connection_timeout_secs)
+- **Relay constants** (`crates/storageos-core/src/config/constants.rs`): `RELAY_HEARTBEAT_INTERVAL_SECS` (30), `RELAY_CONNECTION_TIMEOUT_SECS` (10), `RELAY_RECONNECT_DELAYS` ([1, 2, 5, 10, 30, 60])
+- **Agent relay client** (`services/storageos-agent/src/relay.rs`): Persistent outbound WebSocket connection to relay server
+  - `RelayContext` carries device identity (device_id, public_key, fingerprint) and config
+  - `spawn_relay_client()`: returns `watch::Receiver<RelayState>` for observing relay state; disabled if no URL configured
+  - `relay_loop()`: infinite reconnect loop with configurable backoff (1s → 2s → 5s → 10s → 30s → 60s max)
+  - `try_connect()`: WebSocket handshake with configurable timeout
+  - `run_session()`: sends HELLO message (StorageOS Protocol), then heartbeat (WS Ping) every 30s, handles Pong/Close/errors
+  - `send_hello()`: constructs `Message` envelope with `HelloPayload` containing device_id, public_key, fingerprint, protocol_version, capabilities
+  - Structured logging at every state transition (connecting, connected, disconnected, reconnecting, heartbeat, errors)
+  - Dependencies added: `tokio-tungstenite` 0.24 (WebSocket client), `futures-util` 0.3 (stream splitting)
+- **Agent configuration** (`services/storageos-agent/src/config.rs`): Added `RelayAgentConfig` section
+  - Fields: `url` (Option<String>), `heartbeat_interval_secs` (default 30), `connection_timeout_secs` (default 10)
+  - TOML: `[relay] url = "ws://relay.example.com/ws"` in config.toml
+  - CLI: `--relay-url ws://relay.example.com/ws`
+- **Agent startup integration** (`services/storageos-agent/src/main.rs`): Spawns relay client after presence poller, passes relay state receiver to AppState
+- **Agent health endpoint** (`services/storageos-agent/src/server.rs`): `AppState` now holds `watch::Receiver<RelayState>`; health response includes `relay_status` field
+- **Desktop agent types** (`apps/desktop/src/services/agent/types.ts`): Added `RelayStatus` type (disabled | disconnected | connecting | connected | failed), extended `AgentHealthResponse` and `AgentConnectionInfo`
+- **Desktop AgentClient** (`apps/desktop/src/services/agent/AgentClient.ts`): Parses `relay_status` from health response, exposes via `getInfo()`
+- **Desktop agent store** (`apps/desktop/src/stores/agent.ts`): Tracks `relayStatus` from agent connection info
+- **Desktop StatusBar** (`apps/desktop/src/layouts/StatusBar.tsx`): Shows "LAN Connected" when agent connected; shows relay status indicator (dot + label) when relay is not disabled; dot colors: green=connected, yellow=connecting, gray=disconnected/failed
+- **Build verification**: All 3 Rust crates compile clean, TypeScript clean, 60 tests pass (50 core + 10 agent), no runtime behavior changes, LAN functionality completely unchanged
+
+#### 2026-07-04 — UC-004: Secure Device Identity
+
+- **Identity types** (`crates/storageos-core/src/identity/`): Transport-independent identity and trust model
+  - `DeviceIdentity` struct: device_id, public_key (hex), fingerprint (XXXX-XXXX-XXXX), created_at
+  - `TrustStatus` enum: Pending, Trusted, Revoked with string conversion
+  - `TrustRecord` struct: full trust metadata per peer device (public_key, fingerprint, paired_at, last_verified, trust_status)
+  - `DeviceCertificate` struct: future TLS certificate model (device_id, public_key, fingerprint, created/expires, issuer, signature placeholder, revoked flag)
+  - `verify_identity()`: compares stored vs presented public keys → Match/Mismatch/NoKey result
+  - `format_fingerprint()`: converts 6 raw bytes to human-readable "A7F2-19CD-83AE" format
+  - 6 unit tests covering verification, fingerprint formatting, trust status roundtrip
+  - No new dependencies in storageos-core (serde only)
+
+- **Agent Ed25519 keypair generation** (`services/storageos-agent/src/identity.rs`)
+  - `ensure_keypair()`: generates Ed25519 signing key on first launch via OS CSPRNG, or loads existing keypair from SQLite
+  - SHA-256 fingerprint: hash public key bytes, take first 6 bytes, format as XXXX-XXXX-XXXX
+  - Keys stored as hex strings in `agent_identity` table (private_key, public_key, fingerprint)
+  - New dependencies: `ed25519-dalek` 2 (Ed25519 signatures), `rand_core` 0.6 (OS CSPRNG), `sha2` 0.10 (fingerprint hash)
+
+- **Agent startup identity initialization** (`main.rs`)
+  - `ensure_keypair()` called after device_id creation, before server starts
+  - Fingerprint logged at startup for operator verification
+  - Public key and fingerprint passed to AppState for use in pairing and presence
+
+- **Trust fields in device registry** (`device_registry.rs`)
+  - DeviceRecord extended: `fingerprint`, `last_verified`, `trust_status` fields
+  - New columns on `devices` table: `fingerprint TEXT`, `last_verified INTEGER`, `trust_status TEXT`
+  - `migrate_schema()` auto-detects and creates columns on existing databases
+  - Existing paired devices default to `trust_status = "trusted"` during migration
+  - `register_device()`, `get_device()`, `list_devices()` all handle new fields
+
+- **Identity-aware pairing** (`server.rs`)
+  - `PairInfo` (QR payload): now includes `public_key` and `fingerprint`
+  - `PairDeviceRequest`: accepts `public_key` from remote device (`#[serde(default)]` for backward compat with older Android clients)
+  - `PairDeviceResponse`: returns own `public_key` and `fingerprint`
+  - `pair_device` handler stores remote device's public key and sets trust_status="trusted"
+  - AppState: added `public_key` and `fingerprint` fields, constructor takes 4 params
+
+- **Protocol HelloPayload extension**: Added `public_key` and `fingerprint` fields to `HelloPayload` in `protocol/payloads.rs`
+
+- **Security architecture document**: `docs/architecture/Security.md` (new)
+  - Section 1: Device identity (UUID + Ed25519 keypair + fingerprint, key generation flow)
+  - Section 2: Trust model (explicit pairing, trust states, trust record schema)
+  - Section 3: Pairing protocol (QR flow with public key exchange)
+  - Section 4: Connection verification (key comparison, identity verification results)
+  - Section 5: Certificate model (future TLS data model)
+  - Section 6: Future TLS roadmap (self-signed X.509 from Ed25519, mutual TLS)
+  - Section 7: Future relay (keypair-based auth, E2E encryption via X25519)
+  - Section 8: Threat model (in-scope, out-of-scope, accepted risks for MVP)
+  - Section 9: Design principles (permanent identity, explicit trust, local keys, transport-independent)
+
+- **Build verification**: All 3 Rust crates compile clean, TypeScript clean, 50+ tests pass, no runtime behavior changes
+
+#### 2026-07-04 — UC-003: StorageOS Protocol Foundation
+
+- **Protocol module** (`crates/storageos-core/src/protocol/`): Transport-agnostic message protocol for all StorageOS device communication
+  - `envelope.rs`: `ProtocolVersion` (major.minor with `is_compatible()`), `MessageId`, `MessageKind` (9 variants: Hello, Auth, Ping, Pong, Request, Response, Event, Transfer, Error), `Message` envelope (version, id, request_id, timestamp, source, destination, kind, payload)
+  - `payloads.rs`: `Payload` tagged enum with 12 variants — `HelloPayload` (device identity + capabilities), `AuthPayload` (placeholder), `PingPayload`/`PongPayload` (sequence + uptime), `DirectoryRequest`/`DirectoryResponse` (path + entries), `RootsRequest`/`RootsResponse` (storage roots), `TransferProgressPayload` (transfer state), `PresencePayload` (device status), `DeviceInfoPayload` (device + endpoints), `ErrorPayload` (code + message)
+  - `ErrorCode` enum: Unknown, NotFound, PermissionDenied, InvalidRequest, InternalError, Timeout, Unavailable, VersionMismatch
+  - `EndpointInfo` struct: transport, host, port, reachable (for DeviceInfo payloads)
+  - `CURRENT_VERSION`: 1.0 — protocol version constant
+  - Composes existing domain types: Entry, Root, DeviceId, DeviceKind, Presence, TransferStatus, TransportKind
+  - Serialization: serde derives on all types, `#[serde(tag = "type")]` tagged enum for Payload — designed for MessagePack, works with JSON or any serde format
+  - No new dependencies — uses existing serde from storageos-core
+  - 3 unit tests passing
+- **Module registration**: Added `pub mod protocol;` to `crates/storageos-core/src/lib.rs`
+- **Build verification**: All 3 Rust crates compile clean, TypeScript clean, no runtime changes, existing HTTP APIs unaffected
+
+#### 2026-07-04 — UC-002: Device Registry v2 (Multi-Endpoint Model)
+
+- **Rust core networking rewrite** (`storageos-core/src/networking/mod.rs`): Device now supports multiple transport endpoints
+  - `TransportKind` enum with 5 variants (Lan, Relay, Usb, Bluetooth, Vpn) and `default_priority()` / `display_name()`
+  - `DeviceEndpoint` struct: device_id, transport, host, port, priority, reachable, last_seen, last_successful with `lan()`, `from_address()` constructors and `address()`, `base_url()`, `url()` methods
+  - `ConnectionInfo` extended: `endpoints: Vec<DeviceEndpoint>`, `active_endpoint()`, `best_endpoint()` (lowest priority reachable), `endpoint_count()`, `reachable_count()`
+  - `DeviceResolver` trait extended: `remove_endpoint()`, `all_endpoints()`
+
+- **Agent device_registry.rs rewrite**: Persistent multi-endpoint storage
+  - New `device_endpoints` SQLite table with composite PK (device_id, transport) and FK cascade delete
+  - New `preferred_transport` and `connection_state` columns on `devices` table
+  - `migrate_schema()`: auto-creates new schema, migrates existing address data to LAN endpoints
+  - New methods: `upsert_endpoint()`, `remove_endpoint()`, `list_endpoints()`, `update_endpoint_reachability()`
+  - `register_device()` auto-creates LAN endpoint, `get_device()`/`list_devices()` include endpoints in response, `remove_device()` cascades to endpoints
+
+- **Agent presence.rs rewrite**: Per-endpoint reachability checking
+  - Iterates device endpoints (not just device address), checks each via HTTP
+  - Calls `update_endpoint_reachability()` per endpoint with timestamp
+  - Falls back to legacy address if no endpoints exist
+  - Device status determined by `any_online` across all endpoints
+
+- **Agent server.rs fix**: Added `endpoints`, `preferred_transport`, `connection_state` fields to pair_device handler's DeviceRecord construction
+
+- **TypeScript ConnectionManager extensions**: Multi-endpoint resolution
+  - `registerEndpoints(deviceId, endpoints[])`: bulk register from API
+  - `bestEndpoint()`: priority-based with reachability preference
+  - New: `getActiveTransport()`, `getEndpointCount()`, `getReachableCount()`
+  - `TRANSPORT_PRIORITY` and `TRANSPORT_LABELS` constants exported
+
+- **Devices page UI update**: Transport-aware device cards
+  - Subtitle shows transport label + endpoint count when online (e.g. "LAN · 1 endpoint")
+  - Grid columns: Transport, Endpoints (reachable/total), Paired, Version (replaces Address column)
+  - Polling uses `registerEndpoints()` for full endpoint data from API
+
+- **NavigationPanel update**: Endpoint-aware device polling
+  - DeviceRecord extended with endpoints/preferred_transport/connection_state
+  - Polling maps endpoint arrays to `registerEndpoints()`
+  - Device button enabled when address OR endpoints available
+
+- **Backward compatibility**: `address` field retained, auto-populated from best LAN endpoint
+- **Build verification**: TypeScript `tsc --noEmit` clean, all Rust crates compile clean
+
+#### 2026-07-03 — UC-001: Networking Abstraction Layer
+
+- **Rust networking module** (`storageos-core/src/networking/mod.rs`): `TransportKind`, `ConnectionState`, `DeviceEndpoint` (with `base_url()` / `url()` helpers), `ConnectionInfo`, `DeviceResolver` trait, `Transport` trait
+- **TypeScript ConnectionManager** (`services/network/`): Singleton managing device-to-address resolution with subscription, endpoint registration, URL construction
+- **ExplorerService migration**: All 10 remote methods changed from `address: string` to `deviceId: string`, resolving via `ConnectionManager.getAddress()`
+- **FolderTransferService migration**: All 3 transfer modes (`startRemoteToLocal`, `startLocalToRemote`, `startRemoteSameDevice`) changed from `address` to `deviceId`
+- **Explorer store migration**: `remoteDevice` type changed `{address, name}` → `{deviceId, name}`, clipboard `providerId` format `remote:<deviceId>`, paste routing via `sourceDeviceId`
+- **Explorer.tsx migration**: Remote banner, download context menu, image preview all resolve addresses via ConnectionManager
+- **Devices page**: Device polling registers endpoints in ConnectionManager, Browse button passes `device_id`
+- **NavigationPanel**: Device polling registers endpoints, click handler passes `device_id`, active highlight uses `deviceId`
+- **Agent presence poller**: Uses `DeviceEndpoint::url()` for URL construction instead of hardcoded `format!("http://{}/presence", ...)`
+- **Build verification**: TypeScript `tsc --noEmit` clean, all Rust crates compile clean
+
 ### Product Milestone 3 — Product Polish & UX
 
 #### 2026-07-03 — PM3: Visual Polish, Accessibility, Design System

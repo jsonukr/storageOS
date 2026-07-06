@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { AgentClient } from "@/services/agent";
-import type { AgentConnectionState } from "@/services/agent";
+import type { AgentConnectionState, RelayStatus } from "@/services/agent";
 
 interface AgentStore {
   state: AgentConnectionState;
@@ -8,6 +8,7 @@ interface AgentStore {
   agentUptime: number | null;
   lastError: string | null;
   lastHealthCheck: number | null;
+  relayStatus: RelayStatus;
   initialized: boolean;
 
   initialize: (client: AgentClient) => void;
@@ -19,6 +20,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
   agentUptime: null,
   lastError: null,
   lastHealthCheck: null,
+  relayStatus: "disabled",
   initialized: false,
 
   initialize: (client: AgentClient) => {
@@ -29,6 +31,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
         agentUptime: info.agentUptime,
         lastError: info.lastError,
         lastHealthCheck: info.lastHealthCheck,
+        relayStatus: info.relayStatus,
       });
     });
     set({ initialized: true });

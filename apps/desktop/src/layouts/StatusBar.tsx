@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useExplorerStore } from "@/stores/explorer";
 import { useAgentStore } from "@/stores/agent";
-import type { AgentConnectionState } from "@/services/agent";
+import type { AgentConnectionState, RelayStatus } from "@/services/agent";
+import { ConnectionManager, TRANSPORT_LABELS } from "@/services/network";
+import type { ConnectionQuality, TransportKind } from "@/services/network";
 import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 
 function formatDuration(ms: number): string {
@@ -44,6 +46,75 @@ function agentLabel(state: AgentConnectionState): string {
   }
 }
 
+function relayDotColor(status: RelayStatus): string {
+  switch (status) {
+    case "connected":
+      return "bg-success";
+    case "connecting":
+      return "bg-warning animate-pulse";
+    case "disconnected":
+    case "failed":
+      return "bg-text-tertiary";
+    case "disabled":
+      return "bg-text-tertiary";
+  }
+}
+
+function relayLabel(status: RelayStatus): string {
+  switch (status) {
+    case "connected":
+      return "Relay Connected";
+    case "connecting":
+      return "Relay Connecting...";
+    case "disconnected":
+      return "Relay Disconnected";
+    case "failed":
+      return "Relay Failed";
+    case "disabled":
+      return "Relay Off";
+  }
+}
+
+function qualityDotColor(q: ConnectionQuality): string {
+  switch (q) {
+    case "excellent":
+    case "good":
+      return "bg-success";
+    case "fair":
+      return "bg-warning";
+    case "poor":
+      return "bg-danger";
+    case "offline":
+      return "bg-text-tertiary";
+  }
+}
+
+function qualityLabel(q: ConnectionQuality): string {
+  switch (q) {
+    case "excellent": return "Excellent";
+    case "good": return "Good";
+    case "fair": return "Fair";
+    case "poor": return "Poor";
+    case "offline": return "Offline";
+  }
+}
+
+function useConnectionUpdates(): number {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return ConnectionManager.subscribe(() => setTick((t) => t + 1));
+  }, []);
+  return 0;
+}
+
+function getRemoteTransportLabel(): { transport: TransportKind | null; quality: ConnectionQuality } {
+  const remoteDevice = useExplorerStore.getState().remoteDevice;
+  if (!remoteDevice) return { transport: null, quality: "offline" };
+  const transport = ConnectionManager.getActiveTransport(remoteDevice.deviceId);
+  const quality = ConnectionManager.getConnectionQuality(remoteDevice.deviceId);
+  return { transport, quality };
+}
+
 export function StatusBar() {
   const entries = useExplorerStore((s) => s.entries);
   const selectedEntries = useExplorerStore((s) => s.selectedEntries);
@@ -55,9 +126,17 @@ export function StatusBar() {
   const searchDurationMs = useExplorerStore((s) => s.searchDurationMs);
   const clipboardCount = useExplorerStore((s) => s.clipboardCount);
   const clipboardOperation = useExplorerStore((s) => s.clipboardOperation);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
   const agentState = useAgentStore((s) => s.state);
   const agentVersion = useAgentStore((s) => s.agentVersion);
+  const relayStatus = useAgentStore((s) => s.relayStatus);
   const [showPairDialog, setShowPairDialog] = useState(false);
+
+  useConnectionUpdates();
+
+  const { transport: remoteTransport, quality: remoteQuality } = remoteDevice
+    ? getRemoteTransportLabel()
+    : { transport: null, quality: "offline" as ConnectionQuality };
 
   const isSearchActive = searchQuery.length > 0;
   let itemText: string;
@@ -92,6 +171,12 @@ export function StatusBar() {
     ? `${clipboardCount} item${clipboardCount !== 1 ? "s" : ""} ${clipboardOperation === "cut" ? "cut" : "copied"}`
     : null;
 
+  const transportLabel = remoteDevice && remoteTransport
+    ? `Connected via ${TRANSPORT_LABELS[remoteTransport]}`
+    : agentState === "connected"
+      ? "LAN Connected"
+      : "LAN";
+
   return (
     <footer className="flex h-6 items-center border-t border-border bg-statusbar px-3 text-[11px] text-text-secondary select-none">
       <div className="flex items-center gap-3">
@@ -103,7 +188,24 @@ export function StatusBar() {
           )}
         </StatusItem>
         <StatusDivider />
-        <StatusItem>Local Storage</StatusItem>
+        <StatusItem>
+          {transportLabel}
+          {remoteDevice && remoteQuality !== "offline" && (
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ml-0.5 ${qualityDotColor(remoteQuality)}`}
+              title={`Quality: ${qualityLabel(remoteQuality)}`}
+            />
+          )}
+        </StatusItem>
+        {relayStatus !== "disabled" && (
+          <>
+            <StatusDivider />
+            <StatusItem>
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${relayDotColor(relayStatus)}`} title={relayLabel(relayStatus)} />
+              {relayLabel(relayStatus)}
+            </StatusItem>
+          </>
+        )}
         <StatusDivider />
         <StatusItem>{itemText}</StatusItem>
         {progressText && (

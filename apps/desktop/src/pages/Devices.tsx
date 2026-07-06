@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAgentStore } from "@/stores/agent";
 import { useExplorerStore } from "@/stores/explorer";
+import { ConnectionManager, TRANSPORT_LABELS } from "@/services/network";
+import type { TransportKind, ConnectionQuality } from "@/services/network";
 import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 
 interface PairInfo {
@@ -10,6 +12,16 @@ interface PairInfo {
   port: number;
   name: string;
   version: string;
+}
+
+interface EndpointInfo {
+  transport: string;
+  host: string;
+  port: number;
+  priority: number;
+  reachable: boolean;
+  last_seen: number;
+  last_successful: number;
 }
 
 interface DeviceRecord {
@@ -23,6 +35,9 @@ interface DeviceRecord {
   last_seen: number;
   paired_at: number;
   status: string;
+  endpoints?: EndpointInfo[];
+  preferred_transport?: string;
+  connection_state?: string;
 }
 
 const AGENT_BASE = "http://127.0.0.1:19742";
@@ -41,7 +56,29 @@ export default function Devices() {
   const refreshDevices = useCallback(() => {
     fetch(`${AGENT_BASE}/devices`)
       .then((r) => (r.ok ? r.json() : []))
-      .then(setDevices)
+      .then((devices: DeviceRecord[]) => {
+        for (const d of devices) {
+          if (d.endpoints && d.endpoints.length > 0) {
+            ConnectionManager.registerEndpoints(
+              d.device_id,
+              d.endpoints.map((ep) => ({
+                deviceId: d.device_id,
+                transport: ep.transport as TransportKind,
+                host: ep.host,
+                port: ep.port,
+                priority: ep.priority,
+                reachable: ep.reachable,
+                lastSeen: ep.last_seen || null,
+                lastSuccessful: ep.last_successful || null,
+                health: { latencyMs: null, failureCount: 0, lastFailure: null, successCount: 0, lastSuccess: null },
+              })),
+            );
+          } else if (d.address) {
+            ConnectionManager.registerEndpoint(d.device_id, d.address, d.last_seen);
+          }
+        }
+        setDevices(devices);
+      })
       .catch(() => {});
   }, []);
 
@@ -91,7 +128,8 @@ export default function Devices() {
 
   function openBrowse(device: DeviceRecord) {
     if (device.status !== "online" || !device.address) return;
-    useExplorerStore.getState().browseRemoteDevice(device.address, device.friendly_name);
+    ConnectionManager.registerEndpoint(device.device_id, device.address, device.last_seen);
+    useExplorerStore.getState().browseRemoteDevice(device.device_id, device.friendly_name);
     navigate("/");
   }
 
@@ -109,6 +147,63 @@ export default function Devices() {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return formatDate(epoch);
+  }
+
+  function qualityDotColor(q: ConnectionQuality): string {
+    switch (q) {
+      case "excellent": return "bg-success";
+      case "good": return "bg-success";
+      case "fair": return "bg-warning";
+      case "poor": return "bg-danger";
+      case "offline": return "bg-text-tertiary";
+    }
+  }
+
+  function formatLatency(device: DeviceRecord): string {
+    const transport = ConnectionManager.getActiveTransport(device.device_id);
+    if (!transport) return "-";
+    const health = ConnectionManager.getEndpointHealth(device.device_id, transport);
+    if (!health || health.latencyMs === null) return "-";
+    return `${Math.round(health.latencyMs)}ms`;
+  }
+
+  function DeviceDetails({ device }: { device: DeviceRecord }) {
+    const activeTransport = ConnectionManager.getActiveTransport(device.device_id);
+    const quality = ConnectionManager.getConnectionQuality(device.device_id);
+    const available = ConnectionManager.getAvailableTransports(device.device_id);
+    const reachableCount = ConnectionManager.getReachableCount(device.device_id);
+    const totalCount = ConnectionManager.getEndpointCount(device.device_id);
+    const latencyText = formatLatency(device);
+
+    return (
+      <div className="grid grid-cols-5 gap-3 text-[11px] text-text-tertiary">
+        <div>
+          <div className="text-text-secondary font-medium">Transport</div>
+          <div className="flex items-center gap-1">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${qualityDotColor(quality)}`} />
+            {TRANSPORT_LABELS[(activeTransport || "lan") as TransportKind] || "LAN"}
+          </div>
+        </div>
+        <div>
+          <div className="text-text-secondary font-medium">Available</div>
+          {available.length > 0
+            ? available.map((ep) => TRANSPORT_LABELS[ep.transport]).join(", ")
+            : `${reachableCount}/${totalCount}`}
+        </div>
+        <div>
+          <div className="text-text-secondary font-medium">Latency</div>
+          {latencyText}
+        </div>
+        <div>
+          <div className="text-text-secondary font-medium">Paired</div>
+          {formatDate(device.paired_at)}
+        </div>
+        <div>
+          <div className="text-text-secondary font-medium">Version</div>
+          {device.version || "Unknown"}
+        </div>
+      </div>
+    );
   }
 
   const deviceIcon = (type_: string) => {
@@ -182,7 +277,9 @@ export default function Devices() {
                       {device.friendly_name}
                     </div>
                     <div className="text-[11px] text-text-tertiary">
-                      {device.platform || device.device_type} · {device.status === "online" ? device.address : `Last seen ${formatLastSeen(device.last_seen)}`}
+                      {device.platform || device.device_type} · {device.status === "online"
+                        ? `${TRANSPORT_LABELS[(device.preferred_transport || "lan") as TransportKind] || "LAN"} · ${device.endpoints?.length || 1} endpoint${(device.endpoints?.length || 1) !== 1 ? "s" : ""}`
+                        : `Last seen ${formatLastSeen(device.last_seen)}`}
                     </div>
                   </div>
                   <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${
@@ -190,20 +287,7 @@ export default function Devices() {
                   }`} />
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 text-[11px] text-text-tertiary">
-                  <div>
-                    <div className="text-text-secondary font-medium">Paired</div>
-                    {formatDate(device.paired_at)}
-                  </div>
-                  <div>
-                    <div className="text-text-secondary font-medium">Version</div>
-                    {device.version || "Unknown"}
-                  </div>
-                  <div>
-                    <div className="text-text-secondary font-medium">Address</div>
-                    <span className="truncate block">{device.address || "Unknown"}</span>
-                  </div>
-                </div>
+                <DeviceDetails device={device} />
 
                 <div className="flex gap-2 pt-1 border-t border-border">
                   <button

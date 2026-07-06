@@ -3,6 +3,8 @@ import { listDrives, onBridgeEvent } from "@/lib/tauri";
 import type { LocalDriveInfo } from "@/lib/tauri";
 import { useExplorerStore } from "@/stores/explorer";
 import { useAgentStore } from "@/stores/agent";
+import { ConnectionManager } from "@/services/network";
+import type { TransportKind } from "@/services/network";
 import { PairDeviceDialog } from "./PairDeviceDialog";
 
 interface NavSection {
@@ -205,6 +207,16 @@ function DriveItem({ drive }: { drive: LocalDriveInfo }) {
   );
 }
 
+interface EndpointInfo {
+  transport: string;
+  host: string;
+  port: number;
+  priority: number;
+  reachable: boolean;
+  last_seen: number;
+  last_successful: number;
+}
+
 interface DeviceRecord {
   device_id: string;
   system_name: string;
@@ -216,6 +228,9 @@ interface DeviceRecord {
   last_seen: number;
   paired_at: number;
   status: string;
+  endpoints?: EndpointInfo[];
+  preferred_transport?: string;
+  connection_state?: string;
 }
 
 function DevicesSection() {
@@ -234,7 +249,29 @@ function DevicesSection() {
     function poll() {
       fetch("http://127.0.0.1:19742/devices")
         .then((r) => r.ok ? r.json() : [])
-        .then(setRemoteDevices)
+        .then((devices: DeviceRecord[]) => {
+          for (const d of devices) {
+            if (d.endpoints && d.endpoints.length > 0) {
+              ConnectionManager.registerEndpoints(
+                d.device_id,
+                d.endpoints.map((ep) => ({
+                  deviceId: d.device_id,
+                  transport: ep.transport as TransportKind,
+                  host: ep.host,
+                  port: ep.port,
+                  priority: ep.priority,
+                  reachable: ep.reachable,
+                  lastSeen: ep.last_seen || null,
+                  lastSuccessful: ep.last_successful || null,
+                  health: { latencyMs: null, failureCount: 0, lastFailure: null, successCount: 0, lastSuccess: null },
+                })),
+              );
+            } else if (d.address) {
+              ConnectionManager.registerEndpoint(d.device_id, d.address, d.last_seen);
+            }
+          }
+          setRemoteDevices(devices);
+        })
         .catch(() => {});
     }
 
@@ -278,17 +315,19 @@ function DevicesSection() {
               agentState === "connected" ? "bg-success" : "bg-text-tertiary"
             }`} />
           </button>
-          {remoteDevices.map((device) => (
+          {remoteDevices.map((device) => {
+            const hasConnection = !!device.address || (device.endpoints && device.endpoints.length > 0);
+            return (
             <button
               key={device.device_id}
-              disabled={device.status !== "online" || !device.address}
+              disabled={device.status !== "online" || !hasConnection}
               onClick={() => {
-                if (device.address) {
-                  useExplorerStore.getState().browseRemoteDevice(device.address, device.friendly_name);
+                if (hasConnection) {
+                  useExplorerStore.getState().browseRemoteDevice(device.device_id, device.friendly_name);
                 }
               }}
               className={`flex w-full items-center gap-2 pl-7 pr-3 py-[5px] text-[12px] transition-colors rounded-sm ${
-                remoteDevice?.address === device.address
+                remoteDevice?.deviceId === device.device_id
                   ? "bg-accent/10 text-accent"
                   : device.status === "online"
                     ? "text-text-secondary hover:bg-surface-hover hover:text-text-primary cursor-pointer"
@@ -305,7 +344,8 @@ function DevicesSection() {
                 device.status === "online" ? "bg-success" : "bg-text-tertiary"
               }`} />
             </button>
-          ))}
+          );
+          })}
           <button
             onClick={() => setShowPairDialog(true)}
             className="flex w-full items-center gap-2 pl-7 pr-3 py-[4px] text-[12px] text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors rounded-sm"

@@ -1,4 +1,6 @@
 use crate::device_registry::DeviceRegistry;
+use storageos_core::models::device::DeviceId;
+use storageos_core::networking::{DeviceEndpoint, TransportKind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,15 +20,16 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
             };
 
             for device in devices {
-                if device.address.is_empty() {
+                if device.address.is_empty() && device.endpoints.is_empty() {
                     continue;
                 }
 
-                let url = format!("http://{}/presence", device.address);
                 let registry = registry.clone();
                 let client = client.clone();
                 let device_id = device.device_id.clone();
                 let address = device.address.clone();
+
+                let endpoints = device.endpoints.clone();
 
                 tokio::spawn(async move {
                     let now = SystemTime::now()
@@ -34,24 +37,54 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
                         .unwrap_or_default()
                         .as_secs() as i64;
 
-                    match client.get(&url).send().await {
-                        Ok(resp) if resp.status().is_success() => {
-                            let _ = registry.update_device_status(
-                                &device_id,
-                                "online",
-                                &address,
-                                now,
-                            );
-                        }
-                        _ => {
-                            let _ = registry.update_device_status(
-                                &device_id,
-                                "offline",
-                                &address,
-                                now,
-                            );
+                    let mut any_online = false;
+
+                    for ep in &endpoints {
+                        let endpoint = DeviceEndpoint::from_address(
+                            DeviceId::new(&device_id),
+                            TransportKind::Lan,
+                            &format!("{}:{}", ep.host, ep.port),
+                        );
+                        let url = endpoint.url("/presence");
+
+                        let reachable = match client.get(&url).send().await {
+                            Ok(resp) if resp.status().is_success() => true,
+                            _ => false,
+                        };
+
+                        let _ = registry.update_endpoint_reachability(
+                            &device_id,
+                            &ep.transport,
+                            reachable,
+                            now,
+                        );
+
+                        if reachable {
+                            any_online = true;
                         }
                     }
+
+                    if endpoints.is_empty() && !address.is_empty() {
+                        let endpoint = DeviceEndpoint::from_address(
+                            DeviceId::new(&device_id),
+                            TransportKind::Lan,
+                            &address,
+                        );
+                        let url = endpoint.url("/presence");
+
+                        any_online = match client.get(&url).send().await {
+                            Ok(resp) if resp.status().is_success() => true,
+                            _ => false,
+                        };
+                    }
+
+                    let status = if any_online { "online" } else { "offline" };
+                    let _ = registry.update_device_status(
+                        &device_id,
+                        status,
+                        &address,
+                        now,
+                    );
                 });
             }
         }

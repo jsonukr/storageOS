@@ -28,6 +28,14 @@ mime_guess = "2"
 tray-icon = "0.24"
 qrcode = "0.14"
 hostname = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+sha2 = "0.10"
+tokio-tungstenite = { version = "0.24", features = ["connect"] }
+futures-util = "0.3"
+base64 = "0.22"
+tokio-stream = "0.1"
+bytes = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }

@@ -13,24 +13,47 @@ use storageos_core::platform::Platform;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::{Any, CorsLayer};
 
+use storageos_core::networking::RelayState;
+use tokio::sync::watch;
+
 use crate::device_registry::{DeviceRecord, DeviceRegistry};
+use crate::relay_handle::RelayHandle;
 
 pub struct AppState {
     started_at: Instant,
     pub registry: Arc<DeviceRegistry>,
     pub device_id: String,
     pub pairing_token: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub relay_state: watch::Receiver<RelayState>,
+    pub relay_handle: RelayHandle,
 }
 
 impl AppState {
-    pub fn new(registry: Arc<DeviceRegistry>, device_id: String) -> Self {
+    pub fn new(
+        registry: Arc<DeviceRegistry>,
+        device_id: String,
+        public_key: String,
+        fingerprint: String,
+        relay_state: watch::Receiver<RelayState>,
+        relay_handle: RelayHandle,
+    ) -> Self {
         let pairing_token = uuid::Uuid::new_v4().to_string();
         Self {
             started_at: Instant::now(),
             registry,
             device_id,
             pairing_token,
+            public_key,
+            fingerprint,
+            relay_state,
+            relay_handle,
         }
+    }
+
+    pub fn relay_state(&self) -> RelayState {
+        *self.relay_state.borrow()
     }
 }
 
@@ -60,6 +83,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/entry", delete(delete_entry))
         .route("/upload", post(upload))
         .route("/ws", get(ws_upgrade))
+        .route("/relay/roots", get(crate::relay_proxy::relay_roots))
+        .route("/relay/directory", get(crate::relay_proxy::relay_directory))
+        .route("/relay/mkdir", post(crate::relay_proxy::relay_mkdir))
+        .route("/relay/rename", post(crate::relay_proxy::relay_rename))
+        .route("/relay/entry", delete(crate::relay_proxy::relay_delete))
+        .route("/relay/search", get(crate::relay_proxy::relay_search))
+        .route("/relay/thumbnail", get(crate::relay_proxy::relay_thumbnail))
+        .route("/relay/download", get(crate::relay_proxy::relay_download))
+        .route("/relay/upload", post(crate::relay_proxy::relay_upload))
         .layer(cors)
         .with_state(state)
 }
@@ -80,6 +112,7 @@ struct HealthResponse {
     version: &'static str,
     platform: String,
     device_id: String,
+    relay_status: RelayState,
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -89,6 +122,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
         version: env!("CARGO_PKG_VERSION"),
         platform: Platform::current().display_name().to_string(),
         device_id: state.device_id.clone(),
+        relay_status: state.relay_state(),
     })
 }
 
@@ -146,6 +180,8 @@ struct PairInfo {
     name: String,
     pairing_token: String,
     version: String,
+    public_key: String,
+    fingerprint: String,
 }
 
 fn detect_lan_ip() -> String {
@@ -176,6 +212,8 @@ async fn pair_info(State(state): State<Arc<AppState>>) -> Json<PairInfo> {
         name,
         pairing_token: state.pairing_token.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        public_key: state.public_key.clone(),
+        fingerprint: state.fingerprint.clone(),
     })
 }
 
@@ -191,6 +229,8 @@ async fn pair_qr(State(state): State<Arc<AppState>>) -> Response {
         name,
         pairing_token: state.pairing_token.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        public_key: state.public_key.clone(),
+        fingerprint: state.fingerprint.clone(),
     };
     let qr_data = serde_json::to_string(&qr_payload).unwrap_or_default();
 
@@ -229,6 +269,8 @@ struct PairDeviceRequest {
     version: String,
     address: String,
     pairing_token: String,
+    #[serde(default)]
+    public_key: String,
 }
 
 #[derive(Serialize)]
@@ -240,6 +282,8 @@ struct PairDeviceResponse {
     version: String,
     address: String,
     paired: bool,
+    public_key: String,
+    fingerprint: String,
 }
 
 async fn pair_device(
@@ -270,7 +314,13 @@ async fn pair_device(
         status: "online".to_string(),
         capabilities: "{}".to_string(),
         permissions: "{}".to_string(),
-        public_key: String::new(),
+        public_key: req.public_key.clone(),
+        endpoints: Vec::new(),
+        preferred_transport: "lan".to_string(),
+        connection_state: "connected".to_string(),
+        fingerprint: String::new(),
+        last_verified: now,
+        trust_status: "trusted".to_string(),
     };
 
     state.registry.register_device(&device).map_err(|e| {
@@ -287,6 +337,7 @@ async fn pair_device(
         device_id = %req.device_id,
         system_name = %req.system_name,
         device_type = %req.device_type,
+        has_public_key = !req.public_key.is_empty(),
         "Device paired successfully"
     );
 
@@ -301,6 +352,8 @@ async fn pair_device(
         version: env!("CARGO_PKG_VERSION").to_string(),
         address: format!("{host}:{port}"),
         paired: true,
+        public_key: state.public_key.clone(),
+        fingerprint: state.fingerprint.clone(),
     }))
 }
 

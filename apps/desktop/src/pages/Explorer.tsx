@@ -10,6 +10,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { downloadDir } from "@tauri-apps/api/path";
 import { getThumbnail, pickFiles } from "@/lib/tauri";
 import { ExplorerService } from "@/services/ExplorerService";
+import { ConnectionManager, recordTransferResult, buildRemoteUrl } from "@/services/network";
 
 // ── Thumbnail cache + load queue ──
 
@@ -138,7 +139,7 @@ export default function Explorer() {
 
     if (remote) {
       for (const file of files) {
-        ExplorerService.remoteUploadToDevice(remote.address, file.path, dest, file.name, file.size);
+        ExplorerService.remoteUploadToDevice(remote.deviceId, file.path, dest, file.name, file.size);
       }
     } else {
       for (const file of files) {
@@ -227,7 +228,7 @@ export default function Explorer() {
             <line x1="12" y1="18" x2="12.01" y2="18" />
           </svg>
           <span className="font-medium text-text-primary">Browsing: {remoteDevice.name}</span>
-          <span className="text-text-secondary">({remoteDevice.address})</span>
+          <span className="text-text-secondary">({ConnectionManager.getAddress(remoteDevice.deviceId) ?? "resolving..."})</span>
           <button
             onClick={exitRemoteBrowse}
             className="ml-auto rounded px-2 py-0.5 text-xs font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary"
@@ -1311,7 +1312,7 @@ function InsufficientSpaceDialog() {
 
   const needMatch = spaceError.error.match(/Need ([\d.]+ \w+) but only ([\d.]+ \w+)/);
   const needText = needMatch?.[1] ?? "more space";
-  const availText = needMatch?.[2] ?? "unknown";
+  void needMatch?.[2];
   const driveLetter = spaceError.destination.slice(0, 2);
   const driveLabel = driveInfo?.label || "Local Disk";
   const displayName = driveLabel === "Local Disk" ? `${driveLabel} (${driveLetter})` : `${driveLabel} (${driveLetter})`;
@@ -1655,7 +1656,7 @@ function ContextMenu() {
               label="Download"
               onAction={() => {
                 downloadDir().then((dir) => {
-                  ExplorerService.remoteDownloadFile(remoteDevice.address, entry.full_path, dir, entry.name, entry.size);
+                  ExplorerService.remoteDownloadFile(remoteDevice.deviceId, entry.full_path, dir, entry.name, entry.size);
                 });
                 hide();
               }}
@@ -1718,7 +1719,7 @@ function ContextMenu() {
               pickFiles().then((files) => {
                 for (const file of files) {
                   if (remote) {
-                    ExplorerService.remoteUploadToDevice(remote.address, file.path, dest, file.name, file.size);
+                    ExplorerService.remoteUploadToDevice(remote.deviceId, file.path, dest, file.name, file.size);
                   } else {
                     ExplorerService.uploadToLocal(file.path, dest, file.name, file.size);
                   }
@@ -1782,9 +1783,11 @@ function ImagePreview() {
   const active = images.length > 0 && index >= 0;
   const entry = active ? images[index] : null;
 
+  const imageLoadStart = useRef(0);
+
   const getImageSrc = useCallback((e: { full_path: string }): string => {
     if (remoteDevice) {
-      return `http://${remoteDevice.address}/download?path=${encodeURIComponent(e.full_path)}`;
+      return buildRemoteUrl(remoteDevice.deviceId, `/download?path=${encodeURIComponent(e.full_path)}`) ?? "";
     }
     return convertFileSrc(e.full_path);
   }, [remoteDevice]);
@@ -1797,6 +1800,7 @@ function ImagePreview() {
     setError(false);
     setScale(1);
     setOffset({ x: 0, y: 0 });
+    imageLoadStart.current = performance.now();
   }, [src, active]);
 
   useEffect(() => {
@@ -1870,8 +1874,20 @@ function ImagePreview() {
     }
   };
 
-  const handleImageLoad = () => { setLoading(false); setError(false); };
-  const handleImageError = () => { setLoading(false); setError(true); };
+  const handleImageLoad = () => {
+    setLoading(false);
+    setError(false);
+    if (remoteDevice) {
+      recordTransferResult(remoteDevice.deviceId, true, performance.now() - imageLoadStart.current);
+    }
+  };
+  const handleImageError = () => {
+    setLoading(false);
+    setError(true);
+    if (remoteDevice) {
+      recordTransferResult(remoteDevice.deviceId, false);
+    }
+  };
 
   const hasNext = index < images.length - 1;
   const hasPrev = index > 0;
@@ -2103,7 +2119,6 @@ function SortDropdown() {
   const sortField = useExplorerStore((s) => s.sortField);
   const sortDirection = useExplorerStore((s) => s.sortDirection);
   const foldersFirst = useExplorerStore((s) => s.foldersFirst);
-  const setSortField = useExplorerStore((s) => s.setSortField);
   const setSortDirection = useExplorerStore((s) => s.setSortDirection);
   const toggleFoldersFirst = useExplorerStore((s) => s.toggleFoldersFirst);
   const close = useCallback(() => setOpen(false), []);

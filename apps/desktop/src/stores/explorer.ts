@@ -137,8 +137,8 @@ interface ExplorerState {
   dismissSpaceError: () => void;
   retrySpaceError: () => void;
 
-  remoteDevice: { address: string; name: string } | null;
-  browseRemoteDevice: (address: string, name: string) => void;
+  remoteDevice: { deviceId: string; name: string } | null;
+  browseRemoteDevice: (deviceId: string, name: string) => void;
   exitRemoteBrowse: () => void;
 
   previewImages: DirectoryEntry[];
@@ -162,7 +162,7 @@ function loadDirectory(path: string, set: (partial: Partial<ExplorerState>) => v
   set({ currentPath: path, loading: true, error: null, entries: [], selectedEntries: [], searchQuery: "", searchResults: null, searchLoading: false, searchError: null, searchProgress: null, searchDurationMs: null });
   const remote = useExplorerStore.getState().remoteDevice;
   const promise = remote
-    ? ExplorerService.listRemoteDirectory(remote.address, path)
+    ? ExplorerService.listRemoteDirectory(remote.deviceId, path)
     : ExplorerService.listDirectory(path);
   promise
     .then((entries) => set({ entries: ExplorerSortService.sort(entries, getSortConfig()), loading: false }))
@@ -341,7 +341,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({ operationLoading: true, operationError: null });
     try {
       if (remoteDevice) {
-        await ExplorerService.remoteCreateFolder(remoteDevice.address, currentPath, name);
+        await ExplorerService.remoteCreateFolder(remoteDevice.deviceId, currentPath, name);
       } else {
         await ExplorerService.createFolder(currentPath, name);
       }
@@ -362,7 +362,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({ operationLoading: true, operationError: null });
     try {
       if (remoteDevice) {
-        await ExplorerService.remoteRename(remoteDevice.address, entry.full_path, newName);
+        await ExplorerService.remoteRename(remoteDevice.deviceId, entry.full_path, newName);
       } else {
         await ExplorerService.rename(entry.full_path, newName);
       }
@@ -387,7 +387,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     try {
       for (const entry of targets) {
         if (remoteDevice) {
-          await ExplorerService.remoteDelete(remoteDevice.address, entry.full_path);
+          await ExplorerService.remoteDelete(remoteDevice.deviceId, entry.full_path);
         } else {
           await ExplorerService.delete(entry.full_path);
         }
@@ -471,7 +471,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
   copyEntries: (entries: DirectoryEntry[]) => {
     const remote = get().remoteDevice;
-    const providerId = remote ? `remote:${remote.address}` : "local";
+    const providerId = remote ? `remote:${remote.deviceId}` : "local";
     ClipboardService.copy(
       entries.map((e) => ({
         providerId,
@@ -487,7 +487,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
   cutEntries: (entries: DirectoryEntry[]) => {
     const remote = get().remoteDevice;
-    const providerId = remote ? `remote:${remote.address}` : "local";
+    const providerId = remote ? `remote:${remote.deviceId}` : "local";
     ClipboardService.cut(
       entries.map((e) => ({
         providerId,
@@ -522,7 +522,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     }
 
     const sourceIsRemote = clipboardItems.length > 0 && clipboardItems[0].providerId.startsWith("remote:");
-    const sourceAddress = sourceIsRemote ? clipboardItems[0].providerId.substring(7) : null;
+    const sourceDeviceId = sourceIsRemote ? clipboardItems[0].providerId.substring(7) : null;
     const destIsRemote = !!remoteDevice;
 
     if (isCut && (sourceIsRemote || destIsRemote)) {
@@ -565,16 +565,16 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
       if (sourceIsRemote && !destIsRemote) {
         if (item.type === "directory") {
-          FolderTransferService.startRemoteToLocal(sourceAddress!, item.path, currentPath, fileName);
+          FolderTransferService.startRemoteToLocal(sourceDeviceId!, item.path, currentPath, fileName);
         } else {
-          ExplorerService.remoteDownloadFile(sourceAddress!, item.path, currentPath, fileName, item.size);
+          ExplorerService.remoteDownloadFile(sourceDeviceId!, item.path, currentPath, fileName, item.size);
         }
         queued++;
       } else if (!sourceIsRemote && destIsRemote) {
         if (item.type === "directory") {
-          FolderTransferService.startLocalToRemote(remoteDevice!.address, item.path, currentPath, fileName);
+          FolderTransferService.startLocalToRemote(remoteDevice!.deviceId, item.path, currentPath, fileName);
         } else {
-          ExplorerService.remoteUploadToDevice(remoteDevice!.address, item.path, currentPath, fileName, item.size);
+          ExplorerService.remoteUploadToDevice(remoteDevice!.deviceId, item.path, currentPath, fileName, item.size);
         }
         queued++;
       } else if (!sourceIsRemote && !destIsRemote) {
@@ -585,11 +585,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
           TransferService.setStatus(job.id, "failed", "Failed to start transfer"),
         );
         queued++;
-      } else if (sourceIsRemote && destIsRemote && sourceAddress === remoteDevice!.address) {
+      } else if (sourceIsRemote && destIsRemote && sourceDeviceId === remoteDevice!.deviceId) {
         if (item.type === "directory") {
-          FolderTransferService.startRemoteSameDevice(remoteDevice!.address, item.path, currentPath, fileName);
+          FolderTransferService.startRemoteSameDevice(remoteDevice!.deviceId, item.path, currentPath, fileName);
         } else {
-          ExplorerService.remoteCopyOnDevice(remoteDevice!.address, item.path, currentPath, fileName, item.size);
+          ExplorerService.remoteCopyOnDevice(remoteDevice!.deviceId, item.path, currentPath, fileName, item.size);
         }
         queued++;
       } else {
@@ -708,9 +708,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   },
 
   remoteDevice: null,
-  browseRemoteDevice: (address: string, name: string) => {
-    set({ remoteDevice: { address, name }, historyStack: [], forwardStack: [], currentPath: null, entries: [], loading: true, error: null, selectedEntries: [] });
-    ExplorerService.listRemoteRoots(address)
+  browseRemoteDevice: (deviceId: string, name: string) => {
+    set({ remoteDevice: { deviceId, name }, historyStack: [], forwardStack: [], currentPath: null, entries: [], loading: true, error: null, selectedEntries: [] });
+    ExplorerService.listRemoteRoots(deviceId)
       .then((roots) => {
         if (roots.length === 1) {
           loadDirectory(roots[0].letter + ":\\", set);

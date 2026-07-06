@@ -1,6 +1,7 @@
 import type { DirectoryEntry } from "@/lib/tauri";
 import { createFolder, remoteDownload, remoteUploadFile } from "@/lib/tauri";
 import { ExplorerService } from "@/services/ExplorerService";
+import { buildRemoteUrl, recordTransferResult, remoteFetch } from "@/services/network";
 import { TransferService } from "./TransferService";
 import type { FolderTransfer, TransferStatus } from "./types";
 
@@ -42,17 +43,18 @@ function parentOfRelative(relativePath: string): string {
   return lastSlash > 0 ? normalized.substring(0, lastSlash) : "";
 }
 
+
 async function listRecursive(
   basePath: string,
   mode: "local" | "remote",
-  address?: string,
+  deviceId?: string,
 ): Promise<FlatEntry[]> {
   const result: FlatEntry[] = [];
 
   async function walk(dirPath: string): Promise<void> {
     const entries: DirectoryEntry[] =
       mode === "remote"
-        ? await ExplorerService.listRemoteDirectory(address!, dirPath)
+        ? await ExplorerService.listRemoteDirectory(deviceId!, dirPath)
         : await ExplorerService.listDirectory(dirPath);
 
     for (const entry of entries) {
@@ -88,7 +90,7 @@ async function ensureFolder(
   relativeDir: string,
   created: Set<string>,
   mode: "local" | "remote",
-  address?: string,
+  deviceId?: string,
 ): Promise<number> {
   const normalized = relativeDir.replace(/\\/g, "/");
   if (!normalized || created.has(normalized)) return 0;
@@ -110,7 +112,7 @@ async function ensureFolder(
       if (mode === "local") {
         await createFolder(parentPath, name);
       } else {
-        await ExplorerService.remoteCreateFolder(address!, parentPath, name);
+        await ExplorerService.remoteCreateFolder(deviceId!, parentPath, name);
       }
     } catch {
       // Folder may already exist
@@ -203,11 +205,11 @@ function finalize(ft: FolderTransfer): void {
 
 async function runRemoteToLocal(
   ft: FolderTransfer,
-  address: string,
+  deviceId: string,
   destDir: string,
   folderName: string,
 ): Promise<void> {
-  const entries = await listRecursive(ft.source, "remote", address);
+  const entries = await listRecursive(ft.source, "remote", deviceId);
   const files = entries.filter((e) => !e.isDirectory);
   const folders = entries.filter((e) => e.isDirectory);
 
@@ -246,7 +248,12 @@ async function runRemoteToLocal(
     const fileName = file.relativePath.split(/[\\/]/).pop()!;
     const localDir = parent ? joinPath(ft.destination, parent) : ft.destination;
     const localPath = localDir + "\\" + fileName;
-    const url = `http://${address}/download?path=${encodeURIComponent(file.fullPath)}`;
+    const url = buildRemoteUrl(deviceId, `/download?path=${encodeURIComponent(file.fullPath)}`);
+    if (!url) {
+      ft.failedFiles++;
+      notify();
+      continue;
+    }
 
     ft.currentFile = file.relativePath;
     notify();
@@ -262,9 +269,12 @@ async function runRemoteToLocal(
     childToParent.set(job.id, ft.id);
     TransferService.setStatus(job.id, "running");
 
+    const start = performance.now();
     try {
       await remoteDownload(job.id, url, localPath);
+      recordTransferResult(deviceId, true, performance.now() - start);
     } catch {
+      recordTransferResult(deviceId, false);
       TransferService.setStatus(job.id, "failed", "Failed to start download");
     }
 
@@ -280,7 +290,6 @@ async function runRemoteToLocal(
     notify();
   }
 
-  // Create any remaining empty directories
   for (const folder of folders) {
     if (ft.cancelled) break;
     if (!createdFolders.has(folder.relativePath.replace(/\\/g, "/"))) {
@@ -293,7 +302,7 @@ async function runRemoteToLocal(
 
 async function runLocalToRemote(
   ft: FolderTransfer,
-  address: string,
+  deviceId: string,
   destDir: string,
   folderName: string,
 ): Promise<void> {
@@ -310,7 +319,7 @@ async function runLocalToRemote(
   const createdFolders = new Set<string>();
 
   try {
-    await ExplorerService.remoteCreateFolder(address, destDir, folderName);
+    await ExplorerService.remoteCreateFolder(deviceId, destDir, folderName);
   } catch {
     // Exists when overwriting
   }
@@ -328,7 +337,7 @@ async function runLocalToRemote(
         parent,
         createdFolders,
         "remote",
-        address,
+        deviceId,
       );
       ft.createdFolders = 1 + createdFolders.size;
       if (newCount > 0) notify();
@@ -336,7 +345,12 @@ async function runLocalToRemote(
 
     const fileName = file.relativePath.split(/[\\/]/).pop()!;
     const remoteDir = parent ? joinPath(ft.destination, parent) : ft.destination;
-    const uploadUrl = `http://${address}/upload?path=${encodeURIComponent(remoteDir)}&filename=${encodeURIComponent(fileName)}`;
+    const uploadUrl = buildRemoteUrl(deviceId, `/upload?path=${encodeURIComponent(remoteDir)}&filename=${encodeURIComponent(fileName)}`);
+    if (!uploadUrl) {
+      ft.failedFiles++;
+      notify();
+      continue;
+    }
 
     ft.currentFile = file.relativePath;
     notify();
@@ -352,9 +366,12 @@ async function runLocalToRemote(
     childToParent.set(job.id, ft.id);
     TransferService.setStatus(job.id, "running");
 
+    const start = performance.now();
     try {
       await remoteUploadFile(job.id, file.fullPath, uploadUrl);
+      recordTransferResult(deviceId, true, performance.now() - start);
     } catch {
+      recordTransferResult(deviceId, false);
       TransferService.setStatus(job.id, "failed", "Failed to start upload");
     }
 
@@ -378,7 +395,7 @@ async function runLocalToRemote(
         folder.relativePath,
         createdFolders,
         "remote",
-        address,
+        deviceId,
       );
       ft.createdFolders = 1 + createdFolders.size;
       notify();
@@ -388,11 +405,11 @@ async function runLocalToRemote(
 
 async function runRemoteSameDevice(
   ft: FolderTransfer,
-  address: string,
+  deviceId: string,
   destDir: string,
   folderName: string,
 ): Promise<void> {
-  const entries = await listRecursive(ft.source, "remote", address);
+  const entries = await listRecursive(ft.source, "remote", deviceId);
   const files = entries.filter((e) => !e.isDirectory);
   const folders = entries.filter((e) => e.isDirectory);
 
@@ -405,7 +422,7 @@ async function runRemoteSameDevice(
   const createdFolders = new Set<string>();
 
   try {
-    await ExplorerService.remoteCreateFolder(address, destDir, folderName);
+    await ExplorerService.remoteCreateFolder(deviceId, destDir, folderName);
   } catch {
     // Exists when overwriting
   }
@@ -423,7 +440,7 @@ async function runRemoteSameDevice(
         parent,
         createdFolders,
         "remote",
-        address,
+        deviceId,
       );
       ft.createdFolders = 1 + createdFolders.size;
       if (newCount > 0) notify();
@@ -446,24 +463,31 @@ async function runRemoteSameDevice(
     childToParent.set(job.id, ft.id);
     TransferService.setStatus(job.id, "running");
 
-    const downloadUrl = `http://${address}/download?path=${encodeURIComponent(file.fullPath)}`;
-
+    const start = performance.now();
     try {
-      const resp = await fetch(downloadUrl);
+      const resp = await remoteFetch({
+        deviceId,
+        path: `/download?path=${encodeURIComponent(file.fullPath)}`,
+        retry: false,
+      });
       if (!resp.ok) throw new Error("Download failed");
       const blob = await resp.blob();
       const uploadFile = new File([blob], fileName);
       const form = new FormData();
       form.append("file", uploadFile);
-      const uploadUrl = `http://${address}/upload?path=${encodeURIComponent(remoteDir)}&filename=${encodeURIComponent(fileName)}`;
-      const uploadResp = await fetch(uploadUrl, {
+      const uploadResp = await remoteFetch({
+        deviceId,
+        path: `/upload?path=${encodeURIComponent(remoteDir)}&filename=${encodeURIComponent(fileName)}`,
         method: "POST",
         body: form,
         signal: AbortSignal.timeout(300000),
+        retry: false,
       });
       if (!uploadResp.ok) throw new Error("Upload failed");
+      recordTransferResult(deviceId, true, performance.now() - start);
       TransferService.setStatus(job.id, "completed");
     } catch {
+      recordTransferResult(deviceId, false);
       TransferService.setStatus(job.id, "failed", "Failed to copy on device");
     }
 
@@ -485,7 +509,7 @@ async function runRemoteSameDevice(
         folder.relativePath,
         createdFolders,
         "remote",
-        address,
+        deviceId,
       );
       ft.createdFolders = 1 + createdFolders.size;
       notify();
@@ -568,7 +592,7 @@ export const FolderTransferService = {
   },
 
   startRemoteToLocal(
-    address: string,
+    deviceId: string,
     sourcePath: string,
     destDir: string,
     folderName: string,
@@ -579,7 +603,7 @@ export const FolderTransferService = {
     transfers.set(ft.id, ft);
     notify();
 
-    runRemoteToLocal(ft, address, destDir, folderName)
+    runRemoteToLocal(ft, deviceId, destDir, folderName)
       .catch((err) => {
         ft.status = "failed";
         ft.completedAt = Date.now();
@@ -596,7 +620,7 @@ export const FolderTransferService = {
   },
 
   startLocalToRemote(
-    address: string,
+    deviceId: string,
     sourcePath: string,
     destDir: string,
     folderName: string,
@@ -608,7 +632,7 @@ export const FolderTransferService = {
     transfers.set(ft.id, ft);
     notify();
 
-    runLocalToRemote(ft, address, destDir, folderName)
+    runLocalToRemote(ft, deviceId, destDir, folderName)
       .catch((err) => {
         ft.status = "failed";
         ft.completedAt = Date.now();
@@ -625,7 +649,7 @@ export const FolderTransferService = {
   },
 
   startRemoteSameDevice(
-    address: string,
+    deviceId: string,
     sourcePath: string,
     destDir: string,
     folderName: string,
@@ -637,7 +661,7 @@ export const FolderTransferService = {
     transfers.set(ft.id, ft);
     notify();
 
-    runRemoteSameDevice(ft, address, destDir, folderName)
+    runRemoteSameDevice(ft, deviceId, destDir, folderName)
       .catch((err) => {
         ft.status = "failed";
         ft.completedAt = Date.now();

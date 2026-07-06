@@ -12,6 +12,8 @@ pub struct AgentConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub relay: RelayAgentConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +42,34 @@ pub struct StorageConfig {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RelayAgentConfig {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_secs: u64,
+    #[serde(default = "default_connection_timeout")]
+    pub connection_timeout_secs: u64,
+}
+
+impl Default for RelayAgentConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            heartbeat_interval_secs: default_heartbeat_interval(),
+            connection_timeout_secs: default_connection_timeout(),
+        }
+    }
+}
+
+fn default_heartbeat_interval() -> u64 {
+    storageos_core::config::constants::RELAY_HEARTBEAT_INTERVAL_SECS
+}
+
+fn default_connection_timeout() -> u64 {
+    storageos_core::config::constants::RELAY_CONNECTION_TIMEOUT_SECS
+}
+
 fn default_port() -> u16 {
     DEFAULT_AGENT_PORT
 }
@@ -59,6 +89,7 @@ impl Default for AgentConfig {
             logging: LoggingConfig::default(),
             database: DatabaseConfig::default(),
             storage: StorageConfig::default(),
+            relay: RelayAgentConfig::default(),
         }
     }
 }
@@ -189,6 +220,7 @@ pub struct CliArgs {
     pub config_path: Option<PathBuf>,
     pub port_override: Option<u16>,
     pub bind_override: Option<String>,
+    pub relay_url_override: Option<String>,
 }
 
 pub fn parse_args() -> CliArgs {
@@ -196,6 +228,7 @@ pub fn parse_args() -> CliArgs {
     let mut config_path = None;
     let mut port_override = None;
     let mut bind_override = None;
+    let mut relay_url_override = None;
     let mut i = 1;
 
     while i < args.len() {
@@ -218,6 +251,12 @@ pub fn parse_args() -> CliArgs {
                     bind_override = Some(args[i].clone());
                 }
             }
+            "--relay-url" => {
+                i += 1;
+                if i < args.len() {
+                    relay_url_override = Some(args[i].clone());
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -227,6 +266,7 @@ pub fn parse_args() -> CliArgs {
         config_path,
         port_override,
         bind_override,
+        relay_url_override,
     }
 }
 

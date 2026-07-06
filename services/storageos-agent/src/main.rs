@@ -3,10 +3,15 @@
 mod config;
 mod database;
 mod device_registry;
+mod dispatcher;
 mod dto;
 mod file_service;
+mod identity;
 mod logging;
 mod presence;
+mod relay;
+mod relay_handle;
+mod relay_proxy;
 mod security;
 mod server;
 mod tray;
@@ -37,6 +42,10 @@ async fn main() {
 
     if let Some(bind) = args.bind_override {
         cfg.server.bind = bind;
+    }
+
+    if let Some(relay_url) = args.relay_url_override {
+        cfg.relay.url = Some(relay_url);
     }
 
     logging::init(&cfg.logging.level, &cfg.log_dir());
@@ -86,16 +95,42 @@ async fn main() {
         }
     };
 
-    tracing::info!(device_id = %device_id, "Device identity established");
+    let device_keys = match identity::ensure_keypair(&registry) {
+        Ok(keys) => keys,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to initialize device keypair");
+            std::process::exit(1);
+        }
+    };
+
+    tracing::info!(
+        device_id = %device_id,
+        fingerprint = %device_keys.fingerprint,
+        "Device identity established"
+    );
 
     tracing::info!("Local Storage Provider registered");
 
     presence::spawn_presence_poller(registry.clone());
     tracing::info!("Presence poller started (12s interval)");
 
+    let (relay_state_rx, relay_handle) = relay::spawn_relay_client(relay::RelayContext {
+        device_id: device_id.clone(),
+        public_key: device_keys.public_key_hex.clone(),
+        fingerprint: device_keys.fingerprint.clone(),
+        config: cfg.relay.clone(),
+    });
+
     let tray_rx = tray::spawn(cfg.log_dir());
 
-    let state = Arc::new(AppState::new(registry, device_id));
+    let state = Arc::new(AppState::new(
+        registry,
+        device_id,
+        device_keys.public_key_hex,
+        device_keys.fingerprint,
+        relay_state_rx,
+        relay_handle,
+    ));
     let app = server::router(state);
 
     let bind_ip: std::net::IpAddr = cfg.server.bind.parse().unwrap_or_else(|_| {

@@ -6,6 +6,7 @@ export type {
   AgentHealthResponse,
   AgentVersionResponse,
   AgentConnectionInfo,
+  RelayStatus,
 } from "./types";
 
 let _instance: AgentClient | null = null;

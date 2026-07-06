@@ -1,6 +1,7 @@
 import { listDirectory, listDrives, createFolder, renameItem, deleteItem, copyItem, moveItem, searchDirectory, remoteDownload, remoteUploadFile, startTransfer } from "@/lib/tauri";
 import type { DirectoryEntry, LocalDriveInfo, OperationResult } from "@/lib/tauri";
 import { getAgentClient } from "@/services/agent";
+import { remoteFetch, buildRemoteUrl, recordTransferResult } from "@/services/network";
 import { TransferService } from "@/services/transfer";
 
 export type { DirectoryEntry, LocalDriveInfo, OperationResult };
@@ -54,8 +55,10 @@ export const ExplorerService = {
     return searchDirectory(path, query, recursive);
   },
 
-  async remoteCreateFolder(address: string, parent: string, name: string): Promise<OperationResult> {
-    const r = await fetch(`http://${address}/mkdir`, {
+  async remoteCreateFolder(deviceId: string, parent: string, name: string): Promise<OperationResult> {
+    const r = await remoteFetch({
+      deviceId,
+      path: "/mkdir",
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ parent, name }),
@@ -68,8 +71,10 @@ export const ExplorerService = {
     return r.json();
   },
 
-  async remoteRename(address: string, path: string, newName: string): Promise<OperationResult> {
-    const r = await fetch(`http://${address}/rename`, {
+  async remoteRename(deviceId: string, path: string, newName: string): Promise<OperationResult> {
+    const r = await remoteFetch({
+      deviceId,
+      path: "/rename",
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, new_name: newName }),
@@ -82,8 +87,10 @@ export const ExplorerService = {
     return r.json();
   },
 
-  async remoteDelete(address: string, path: string): Promise<OperationResult> {
-    const r = await fetch(`http://${address}/entry?path=${encodeURIComponent(path)}`, {
+  async remoteDelete(deviceId: string, path: string): Promise<OperationResult> {
+    const r = await remoteFetch({
+      deviceId,
+      path: `/entry?path=${encodeURIComponent(path)}`,
       method: "DELETE",
       signal: AbortSignal.timeout(15000),
     });
@@ -94,10 +101,12 @@ export const ExplorerService = {
     return r.json();
   },
 
-  async remoteUpload(address: string, destPath: string, file: File): Promise<OperationResult> {
+  async remoteUpload(deviceId: string, destPath: string, file: File): Promise<OperationResult> {
     const form = new FormData();
     form.append("file", file);
-    const r = await fetch(`http://${address}/upload?path=${encodeURIComponent(destPath)}&filename=${encodeURIComponent(file.name)}`, {
+    const r = await remoteFetch({
+      deviceId,
+      path: `/upload?path=${encodeURIComponent(destPath)}&filename=${encodeURIComponent(file.name)}`,
       method: "POST",
       body: form,
       signal: AbortSignal.timeout(300000),
@@ -109,34 +118,50 @@ export const ExplorerService = {
     return r.json();
   },
 
-  async remoteDownloadUrl(address: string, path: string): Promise<string> {
-    return `http://${address}/download?path=${encodeURIComponent(path)}`;
+  async remoteDownloadUrl(deviceId: string, path: string): Promise<string> {
+    const url = buildRemoteUrl(deviceId, `/download?path=${encodeURIComponent(path)}`);
+    if (!url) throw new Error(`No connection for device ${deviceId}`);
+    return url;
   },
 
-  remoteDownloadFile(address: string, remotePath: string, localDestDir: string, fileName: string, size: number): void {
-    const url = `http://${address}/download?path=${encodeURIComponent(remotePath)}`;
+  remoteDownloadFile(deviceId: string, remotePath: string, localDestDir: string, fileName: string, size: number): void {
+    const url = buildRemoteUrl(deviceId, `/download?path=${encodeURIComponent(remotePath)}`);
+    if (!url) return;
     const destPath = `${localDestDir.replace(/[\\/]+$/, "")}\\${fileName}`;
     const job = TransferService.addJob("copy", fileName, remotePath, localDestDir, size);
     TransferService.setStatus(job.id, "running");
-    remoteDownload(job.id, url, destPath).catch(() =>
-      TransferService.setStatus(job.id, "failed", "Failed to start download"),
-    );
+    const start = performance.now();
+    remoteDownload(job.id, url, destPath)
+      .then(() => recordTransferResult(deviceId, true, performance.now() - start))
+      .catch(() => {
+        recordTransferResult(deviceId, false);
+        TransferService.setStatus(job.id, "failed", "Failed to start download");
+      });
   },
 
-  remoteUploadToDevice(address: string, localPath: string, remoteDestDir: string, fileName: string, size: number): void {
-    const uploadUrl = `http://${address}/upload?path=${encodeURIComponent(remoteDestDir)}&filename=${encodeURIComponent(fileName)}`;
+  remoteUploadToDevice(deviceId: string, localPath: string, remoteDestDir: string, fileName: string, size: number): void {
+    const uploadUrl = buildRemoteUrl(deviceId, `/upload?path=${encodeURIComponent(remoteDestDir)}&filename=${encodeURIComponent(fileName)}`);
+    if (!uploadUrl) return;
     const job = TransferService.addJob("copy", fileName, localPath, remoteDestDir, size);
     TransferService.setStatus(job.id, "running");
-    remoteUploadFile(job.id, localPath, uploadUrl).catch(() =>
-      TransferService.setStatus(job.id, "failed", "Failed to start upload"),
-    );
+    const start = performance.now();
+    remoteUploadFile(job.id, localPath, uploadUrl)
+      .then(() => recordTransferResult(deviceId, true, performance.now() - start))
+      .catch(() => {
+        recordTransferResult(deviceId, false);
+        TransferService.setStatus(job.id, "failed", "Failed to start upload");
+      });
   },
 
-  remoteCopyOnDevice(address: string, sourcePath: string, destDir: string, fileName: string, size: number): void {
+  remoteCopyOnDevice(deviceId: string, sourcePath: string, destDir: string, fileName: string, size: number): void {
     const job = TransferService.addJob("copy", fileName, sourcePath, destDir, size);
     TransferService.setStatus(job.id, "running");
-    const downloadUrl = `http://${address}/download?path=${encodeURIComponent(sourcePath)}`;
-    fetch(downloadUrl)
+    const start = performance.now();
+    remoteFetch({
+      deviceId,
+      path: `/download?path=${encodeURIComponent(sourcePath)}`,
+      retry: false,
+    })
       .then((r) => {
         if (!r.ok) throw new Error("Download failed");
         return r.blob();
@@ -145,14 +170,24 @@ export const ExplorerService = {
         const file = new File([blob], fileName);
         const form = new FormData();
         form.append("file", file);
-        const uploadUrl = `http://${address}/upload?path=${encodeURIComponent(destDir)}&filename=${encodeURIComponent(fileName)}`;
-        return fetch(uploadUrl, { method: "POST", body: form, signal: AbortSignal.timeout(300000) });
+        return remoteFetch({
+          deviceId,
+          path: `/upload?path=${encodeURIComponent(destDir)}&filename=${encodeURIComponent(fileName)}`,
+          method: "POST",
+          body: form,
+          signal: AbortSignal.timeout(300000),
+          retry: false,
+        });
       })
       .then((r) => {
         if (!r.ok) throw new Error("Upload failed");
+        recordTransferResult(deviceId, true, performance.now() - start);
         TransferService.setStatus(job.id, "completed");
       })
-      .catch(() => TransferService.setStatus(job.id, "failed", "Failed to copy on device"));
+      .catch(() => {
+        recordTransferResult(deviceId, false);
+        TransferService.setStatus(job.id, "failed", "Failed to copy on device");
+      });
   },
 
   uploadToLocal(sourcePath: string, destDir: string, fileName: string, size: number): void {
@@ -163,14 +198,22 @@ export const ExplorerService = {
     );
   },
 
-  async listRemoteRoots(address: string): Promise<LocalDriveInfo[]> {
-    const r = await fetch(`http://${address}/roots`, { signal: AbortSignal.timeout(15000) });
+  async listRemoteRoots(deviceId: string): Promise<LocalDriveInfo[]> {
+    const r = await remoteFetch({
+      deviceId,
+      path: "/roots",
+      signal: AbortSignal.timeout(15000),
+    });
     if (!r.ok) throw new Error("Failed to load remote drives");
     return r.json();
   },
 
-  async listRemoteDirectory(address: string, path: string): Promise<DirectoryEntry[]> {
-    const r = await fetch(`http://${address}/directory?path=${encodeURIComponent(path)}`, { signal: AbortSignal.timeout(60000) });
+  async listRemoteDirectory(deviceId: string, path: string): Promise<DirectoryEntry[]> {
+    const r = await remoteFetch({
+      deviceId,
+      path: `/directory?path=${encodeURIComponent(path)}`,
+      signal: AbortSignal.timeout(60000),
+    });
     if (!r.ok) throw new Error("Failed to load remote directory");
     return r.json();
   },

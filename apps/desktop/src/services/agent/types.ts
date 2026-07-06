@@ -9,11 +9,19 @@ export type AgentConnectionState =
   | "connected"
   | "error";
 
+export type RelayStatus =
+  | "disabled"
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "failed";
+
 export interface AgentHealthResponse {
   readonly status: "ok";
   readonly uptime_secs: number;
   readonly version: string;
   readonly platform: string;
+  readonly relay_status?: RelayStatus;
 }
 
 export interface AgentVersionResponse {
@@ -28,4 +36,5 @@ export interface AgentConnectionInfo {
   readonly agentUptime: number | null;
   readonly lastError: string | null;
   readonly lastHealthCheck: number | null;
+  readonly relayStatus: RelayStatus;
 }

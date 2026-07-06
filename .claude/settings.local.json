@@ -67,7 +67,13 @@
       "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo update cookie --breaking 2>&1)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\\\\src-tauri\"; cargo build 2>&1 | Select-String \"error\\\\[\")",
       "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npx tauri dev 2>&1)",
-      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npm run tauri dev 2>&1)"
+      "PowerShell($env:Path = \"C:\\\\Users\\\\jsonu\\\\.cargo\\\\bin;\" + $env:Path; Set-Location \"s:\\\\P\\\\StorageOS\\\\apps\\\\desktop\"; npm run tauri dev 2>&1)",
+      "WebFetch(domain:v2.tauri.app)",
+      "WebFetch(domain:lib.rs)",
+      "WebFetch(domain:github.com)",
+      "Bash(ls \"s:\\\\P\\\\StorageOS\\\\\" 2>&1 | head -30)",
+      "Read(//s/P/**)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.cargo\\\\bin\\\\cargo.exe\" check --manifest-path \"$\\(\\(Get-Location\\).Path\\)\\\\src-tauri\\\\Cargo.toml\" 2>&1 | Select-Object -Last 10)"
     ]
   }
 }
