@@ -27,6 +27,9 @@ interface AgentApi {
     @POST("/devices/pair")
     suspend fun pairDevice(@Body request: PairDeviceRequest): PairDeviceResponse
 
+    @POST("/pair/initiate")
+    suspend fun pairInitiate(@Body request: PairInitiateV2Request): PairSessionStatus
+
     @POST("/mkdir")
     suspend fun mkdir(@Body request: MkdirRequest): OperationResponse
 

@@ -18,6 +18,7 @@ import com.storageos.android.ui.browser.BrowserViewModel
 import com.storageos.android.ui.connect.ConnectScreen
 import com.storageos.android.ui.connect.ConnectViewModel
 import com.storageos.android.ui.devices.DevicesScreen
+import com.storageos.android.ui.pair.PairScreen
 import com.storageos.android.ui.settings.SettingsScreen
 import com.storageos.android.ui.transfers.TransfersScreen
 
@@ -43,6 +44,7 @@ fun AppNavigation() {
                         popUpTo("connect") { inclusive = true }
                     }
                 },
+                onSharePairing = { navController.navigate("pair") },
                 viewModel = connectViewModel,
             )
         }
@@ -99,6 +101,13 @@ fun AppNavigation() {
                 downloadManager = downloadManager,
                 uploadManager = uploadManager,
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("pair") {
+            PairScreen(
+                onBack = { navController.popBackStack() },
+                onPaired = { navController.popBackStack() },
             )
         }
 

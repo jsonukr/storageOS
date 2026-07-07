@@ -4,7 +4,7 @@ use std::time::Instant;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -28,6 +28,7 @@ pub fn router(state: Arc<RelayState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/devices", get(list_devices))
+        .route("/pair/lookup", post(pair_code_lookup))
         .route("/ws", get(ws_upgrade))
         .layer(cors)
         .with_state(state)
@@ -54,6 +55,47 @@ async fn list_devices(
     State(state): State<Arc<RelayState>>,
 ) -> Json<Vec<DevicePresence>> {
     Json(state.registry.list_devices().await)
+}
+
+#[derive(serde::Deserialize)]
+struct PairLookupRequest {
+    pair_code: String,
+}
+
+#[derive(Serialize)]
+struct PairLookupResponse {
+    found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fingerprint: Option<String>,
+}
+
+async fn pair_code_lookup(
+    State(state): State<Arc<RelayState>>,
+    Json(req): Json<PairLookupRequest>,
+) -> Json<PairLookupResponse> {
+    let normalized = req.pair_code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect::<String>();
+
+    match state.registry.resolve_pair_code(&normalized).await {
+        Some(entry) => Json(PairLookupResponse {
+            found: true,
+            device_id: Some(entry.device_id),
+            display_name: Some(entry.display_name),
+            fingerprint: Some(entry.fingerprint),
+        }),
+        None => Json(PairLookupResponse {
+            found: false,
+            device_id: None,
+            display_name: None,
+            fingerprint: None,
+        }),
+    }
 }
 
 async fn ws_upgrade(

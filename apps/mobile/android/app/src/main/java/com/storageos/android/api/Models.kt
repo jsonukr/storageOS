@@ -83,3 +83,25 @@ data class PairDeviceResponse(
     val address: String,
     val paired: Boolean,
 )
+
+@Serializable
+data class PairInitiateV2Request(
+    @SerialName("pair_code") val pairCode: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("device_kind") val deviceKind: String = "android",
+    val platform: String = "",
+    val version: String = "",
+    @SerialName("public_key") val publicKey: String = "",
+    val fingerprint: String = "",
+    val capabilities: List<String> = emptyList(),
+)
+
+@Serializable
+data class PairSessionStatus(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("pair_code") val pairCode: String,
+    @SerialName("pair_code_formatted") val pairCodeFormatted: String,
+    val state: String,
+    @SerialName("expires_in_secs") val expiresInSecs: Long,
+)

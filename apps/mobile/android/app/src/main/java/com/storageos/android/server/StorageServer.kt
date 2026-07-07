@@ -15,9 +15,10 @@ import java.io.FileOutputStream
 class StorageServer(
     private val deviceId: String,
     port: Int = DEFAULT_PORT,
+    private val identityProvider: (() -> DeviceIdentityInfo)? = null,
 ) : NanoHTTPD("0.0.0.0", port) {
 
-    private val json = Json { encodeDefaults = true }
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val startTime = System.currentTimeMillis()
 
     override fun serve(session: IHTTPSession): Response {
@@ -33,6 +34,8 @@ class StorageServer(
             when {
                 uri == "/health" -> serveHealth()
                 uri == "/presence" -> servePresence()
+                uri == "/pair" && session.method == Method.GET -> servePairInfo()
+                uri == "/pair/qr" && session.method == Method.GET -> servePairQr()
                 uri == "/roots" -> serveRoots()
                 uri == "/directory" -> serveDirectory(params["path"])
                 uri == "/download" -> serveDownload(params["path"])
@@ -343,11 +346,68 @@ class StorageServer(
         return json.encodeToString(ErrorResp(code, message))
     }
 
+    private fun servePairInfo(): Response {
+        val provider = identityProvider ?: return newFixedLengthResponse(
+            Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("NO_IDENTITY", "Identity not configured")
+        )
+        val info = provider()
+        val body = json.encodeToString(info)
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, body)
+    }
+
+    private fun servePairQr(): Response {
+        val provider = identityProvider ?: return newFixedLengthResponse(
+            Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("NO_IDENTITY", "Identity not configured")
+        )
+        val info = provider()
+        val body = json.encodeToString(info)
+
+        val qrWriter = com.google.zxing.qrcode.QRCodeWriter()
+        val matrix = qrWriter.encode(body, com.google.zxing.BarcodeFormat.QR_CODE, 256, 256)
+        val w = matrix.width
+        val h = matrix.height
+
+        val svg = buildString {
+            append("""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $w $h" width="256" height="256">""")
+            append("""<rect width="$w" height="$h" fill="white"/>""")
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    if (matrix[x, y]) {
+                        append("""<rect x="$x" y="$y" width="1" height="1" fill="black"/>""")
+                    }
+                }
+            }
+            append("</svg>")
+        }
+
+        return newFixedLengthResponse(Response.Status.OK, "image/svg+xml", svg)
+    }
+
     companion object {
         const val DEFAULT_PORT = 19743
         private const val MIME_JSON = "application/json"
     }
 }
+
+@Serializable
+data class DeviceIdentityInfo(
+    val v: Int = 2,
+    val id: String,
+    val pk: String,
+    val fp: String,
+    val name: String,
+    val code: String,
+    val caps: List<String> = listOf("browse", "transfer"),
+    val relay: String? = null,
+    val ts: Long = System.currentTimeMillis() / 1000,
+    val sig: String? = null,
+    val hint: LanHintInfo? = null,
+)
+
+@Serializable
+data class LanHintInfo(
+    val lan: String,
+)
 
 @Serializable
 private data class HealthResp(

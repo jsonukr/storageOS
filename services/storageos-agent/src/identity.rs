@@ -52,6 +52,13 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+pub fn load_signing_key(registry: &crate::device_registry::DeviceRegistry) -> Option<SigningKey> {
+    let secret_hex = registry.get_identity("private_key").ok()??;
+    let bytes = hex_decode(&secret_hex);
+    let key_bytes: [u8; 32] = bytes.try_into().ok()?;
+    Some(SigningKey::from_bytes(&key_bytes))
+}
+
 fn hex_decode(hex: &str) -> Vec<u8> {
     (0..hex.len())
         .step_by(2)

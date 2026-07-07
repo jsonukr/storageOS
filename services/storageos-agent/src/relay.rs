@@ -15,11 +15,18 @@ use tokio_tungstenite::tungstenite;
 use crate::config::RelayAgentConfig;
 use crate::relay_handle::RelayHandle;
 
+#[derive(Debug, Clone)]
+pub struct PairRelayEvent {
+    pub source_device_id: String,
+    pub payload: serde_json::Value,
+}
+
 pub struct RelayContext {
     pub device_id: String,
     pub public_key: String,
     pub fingerprint: String,
     pub config: RelayAgentConfig,
+    pub pair_event_tx: Option<mpsc::UnboundedSender<PairRelayEvent>>,
 }
 
 pub fn spawn_relay_client(
@@ -65,7 +72,7 @@ async fn relay_loop(
                 let _ = state_tx.send(RelayState::Connected);
                 tracing::info!(url = %url, "Relay connected");
 
-                run_session(ws, &ctx, &state_tx, &mut outbound_rx, &pending).await;
+                run_session(ws, &ctx, &state_tx, &mut outbound_rx, &pending, &ctx.pair_event_tx).await;
 
                 let _ = state_tx.send(RelayState::Disconnected);
                 tracing::info!(url = %url, "Relay disconnected");
@@ -123,6 +130,7 @@ async fn run_session(
     state_tx: &watch::Sender<RelayState>,
     outbound_rx: &mut mpsc::UnboundedReceiver<String>,
     pending: &crate::relay_handle::PendingMap,
+    pair_event_tx: &Option<mpsc::UnboundedSender<PairRelayEvent>>,
 ) {
     let (mut sink, mut stream) = ws.split();
 
@@ -176,7 +184,7 @@ async fn run_session(
                         }
                     }
                     Some(Ok(tungstenite::Message::Text(text))) => {
-                        handle_incoming_text(&text, &device_id, pending, &mut sink).await;
+                        handle_incoming_text(&text, &device_id, pending, pair_event_tx, &mut sink).await;
                     }
                     Some(Ok(tungstenite::Message::Binary(data))) => {
                         tracing::debug!(len = data.len(), "Relay binary message received");
@@ -208,6 +216,7 @@ async fn handle_incoming_text(
     text: &str,
     device_id: &str,
     pending: &crate::relay_handle::PendingMap,
+    pair_event_tx: &Option<mpsc::UnboundedSender<PairRelayEvent>>,
     sink: &mut futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -215,6 +224,31 @@ async fn handle_incoming_text(
         tungstenite::Message,
     >,
 ) {
+    if let Some(tx) = pair_event_tx {
+        if let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) {
+            if let Some(payload) = raw.get("payload") {
+                if let Some(ptype) = payload.get("type").and_then(|t| t.as_str()) {
+                    if matches!(ptype, "pair_initiate" | "pair_complete" | "pair_approve" | "pair_reject") {
+                        let source = raw.get("source")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        tracing::info!(
+                            source = %source,
+                            payload_type = %ptype,
+                            "Pair relay event received"
+                        );
+                        let _ = tx.send(PairRelayEvent {
+                            source_device_id: source,
+                            payload: payload.clone(),
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     let msg: Message = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {

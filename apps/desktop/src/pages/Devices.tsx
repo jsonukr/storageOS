@@ -5,13 +5,14 @@ import { useExplorerStore } from "@/stores/explorer";
 import { ConnectionManager, TRANSPORT_LABELS } from "@/services/network";
 import type { TransportKind, ConnectionQuality } from "@/services/network";
 import { PairDeviceDialog } from "@/components/PairDeviceDialog";
+import { PairCodeEntryDialog } from "@/components/PairCodeEntryDialog";
 
 interface PairInfo {
-  device_id: string;
-  host: string;
-  port: number;
+  v?: number;
+  id: string;
   name: string;
-  version: string;
+  fp?: string;
+  hint?: { lan: string };
 }
 
 interface EndpointInfo {
@@ -52,6 +53,7 @@ export default function Devices() {
   const [renameTarget, setRenameTarget] = useState<DeviceRecord | null>(null);
   const [renameName, setRenameName] = useState("");
   const [forgetTarget, setForgetTarget] = useState<DeviceRecord | null>(null);
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
 
   const refreshDevices = useCallback(() => {
     fetch(`${AGENT_BASE}/devices`)
@@ -228,13 +230,22 @@ export default function Devices() {
       <div className="max-w-[720px] mx-auto py-6 px-6 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold text-text-primary">Devices</h1>
-          <button
-            onClick={() => setShowPairDialog(true)}
-            disabled={agentState !== "connected"}
-            className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Pair Device
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowCodeEntry(true)}
+              disabled={agentState !== "connected"}
+              className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Enter Code
+            </button>
+            <button
+              onClick={() => setShowPairDialog(true)}
+              disabled={agentState !== "connected"}
+              className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Pair Device
+            </button>
+          </div>
         </div>
 
         {/* This PC */}
@@ -248,7 +259,7 @@ export default function Devices() {
                 {pairInfo?.name ?? "This PC"} <span className="text-[11px] text-text-tertiary font-normal">(this device)</span>
               </div>
               <div className="text-[11px] text-text-tertiary">
-                {pairInfo ? `${pairInfo.host}:${pairInfo.port}` : "Agent offline"}
+                {pairInfo?.hint?.lan ? pairInfo.hint.lan : (pairInfo ? "Agent online" : "Agent offline")}
                 {agentVersion && ` · v${agentVersion}`}
               </div>
             </div>
@@ -330,7 +341,8 @@ export default function Devices() {
         )}
       </div>
 
-      {showPairDialog && <PairDeviceDialog onClose={() => setShowPairDialog(false)} />}
+      {showPairDialog && <PairDeviceDialog onClose={() => { setShowPairDialog(false); refreshDevices(); }} />}
+      {showCodeEntry && <PairCodeEntryDialog onClose={() => setShowCodeEntry(false)} onPaired={() => { refreshDevices(); }} />}
 
       {/* Rename Dialog */}
       {renameTarget && (

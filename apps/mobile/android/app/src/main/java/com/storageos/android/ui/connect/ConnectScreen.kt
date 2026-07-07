@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +54,7 @@ import com.storageos.android.data.SavedDevice
 @Composable
 fun ConnectScreen(
     onConnected: (AgentApi) -> Unit,
+    onSharePairing: (() -> Unit)? = null,
     viewModel: ConnectViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -142,6 +144,23 @@ fun ConnectScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("Scan QR Code")
+                }
+
+                if (onSharePairing != null) {
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedButton(
+                        onClick = onSharePairing,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Share Pairing Info")
+                    }
                 }
 
                 if (state.savedDevices.isNotEmpty()) {

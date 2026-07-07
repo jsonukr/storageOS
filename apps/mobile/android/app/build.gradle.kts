@@ -68,5 +68,7 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

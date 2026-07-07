@@ -17,6 +17,7 @@ use storageos_core::networking::RelayState;
 use tokio::sync::watch;
 
 use crate::device_registry::{DeviceRecord, DeviceRegistry};
+use crate::pairing::PairingManager;
 use crate::relay_handle::RelayHandle;
 
 pub struct AppState {
@@ -28,6 +29,7 @@ pub struct AppState {
     pub fingerprint: String,
     pub relay_state: watch::Receiver<RelayState>,
     pub relay_handle: RelayHandle,
+    pub pairing_manager: Arc<PairingManager>,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
         fingerprint: String,
         relay_state: watch::Receiver<RelayState>,
         relay_handle: RelayHandle,
+        pairing_manager: Arc<PairingManager>,
     ) -> Self {
         let pairing_token = uuid::Uuid::new_v4().to_string();
         Self {
@@ -49,6 +52,7 @@ impl AppState {
             fingerprint,
             relay_state,
             relay_handle,
+            pairing_manager,
         }
     }
 
@@ -73,6 +77,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/thumbnail", get(thumbnail))
         .route("/pair", get(pair_info))
         .route("/pair/qr", get(pair_qr))
+        .route("/pair/session", get(get_pair_session).post(create_pair_session).delete(cancel_pair_session))
+        .route("/pair/initiate", post(pair_initiate))
+        .route("/pair/approve", post(pair_approve))
+        .route("/pair/reject", post(pair_reject))
+        .route("/pair/pending", get(pair_pending))
+        .route("/pair/connect-code", post(pair_connect_code))
         .route("/presence", get(presence))
         .route("/devices", get(list_devices))
         .route("/devices/pair", post(pair_device))
@@ -172,19 +182,7 @@ async fn presence(State(state): State<Arc<AppState>>) -> Json<PresenceResponse> 
 
 // --- QR Pairing ---
 
-#[derive(Serialize)]
-struct PairInfo {
-    device_id: String,
-    host: String,
-    port: u16,
-    name: String,
-    pairing_token: String,
-    version: String,
-    public_key: String,
-    fingerprint: String,
-}
-
-fn detect_lan_ip() -> String {
+pub(crate) fn detect_lan_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
         .and_then(|s| {
             s.connect("8.8.8.8:80")?;
@@ -201,37 +199,42 @@ fn device_name() -> String {
         .unwrap_or_else(|| "StorageOS".to_string())
 }
 
-async fn pair_info(State(state): State<Arc<AppState>>) -> Json<PairInfo> {
+async fn pair_info(State(state): State<Arc<AppState>>) -> Response {
+    let session = state.pairing_manager.create_session().await;
     let host = detect_lan_ip();
-    let name = device_name();
-    tracing::info!(host = %host, name = %name, device_id = %state.device_id, "Pair info requested");
-    Json(PairInfo {
-        device_id: state.device_id.clone(),
-        host,
-        port: storageos_core::config::constants::DEFAULT_AGENT_PORT,
-        name,
-        pairing_token: state.pairing_token.clone(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        public_key: state.public_key.clone(),
-        fingerprint: state.fingerprint.clone(),
-    })
+    let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
+    let lan_hint = format!("{host}:{port}");
+
+    let qr_payload = state.pairing_manager.generate_qr_payload(
+        &session.pair_code,
+        Some(lan_hint),
+    );
+
+    tracing::info!(
+        device_id = %state.device_id,
+        pair_code = %session.pair_code,
+        "V2 pair info requested"
+    );
+
+    let json = serde_json::to_string(&qr_payload).unwrap_or_default();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(json))
+        .unwrap()
 }
 
 async fn pair_qr(State(state): State<Arc<AppState>>) -> Response {
+    let session = state.pairing_manager.create_session().await;
     let host = detect_lan_ip();
     let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
-    let name = device_name();
+    let lan_hint = format!("{host}:{port}");
 
-    let qr_payload = PairInfo {
-        device_id: state.device_id.clone(),
-        host,
-        port,
-        name,
-        pairing_token: state.pairing_token.clone(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        public_key: state.public_key.clone(),
-        fingerprint: state.fingerprint.clone(),
-    };
+    let qr_payload = state.pairing_manager.generate_qr_payload(
+        &session.pair_code,
+        Some(lan_hint),
+    );
     let qr_data = serde_json::to_string(&qr_payload).unwrap_or_default();
 
     let code = match qrcode::QrCode::new(qr_data.as_bytes()) {
@@ -256,6 +259,317 @@ async fn pair_qr(State(state): State<Arc<AppState>>) -> Response {
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(svg))
         .unwrap()
+}
+
+// --- Universal Pairing Session Endpoints ---
+
+async fn create_pair_session(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::pairing::SessionStatus> {
+    let session = state.pairing_manager.create_session().await;
+
+    tracing::info!(
+        session_id = %session.session_id,
+        pair_code = %session.pair_code,
+        "Pair session created"
+    );
+
+    let status = state.pairing_manager.get_session(&session.session_id).await
+        .unwrap_or_else(|| crate::pairing::SessionStatus {
+            session_id: session.session_id,
+            pair_code: session.pair_code.clone(),
+            pair_code_formatted: storageos_core::protocol::pairing::format_pair_code(&session.pair_code),
+            state: crate::pairing::SessionState::AwaitingPeer,
+            expires_in_secs: 300,
+            peer: None,
+        });
+
+    Json(status)
+}
+
+async fn get_pair_session(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<crate::pairing::SessionStatus>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    state.pairing_manager.get_active_session().await
+        .map(Json)
+        .ok_or_else(|| (
+            StatusCode::NOT_FOUND,
+            Json(crate::dto::ErrorDto {
+                code: "NOT_FOUND".to_string(),
+                message: "No active pairing session".to_string(),
+            }),
+        ))
+}
+
+async fn cancel_pair_session(
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    if let Some(session) = state.pairing_manager.get_active_session().await {
+        state.pairing_manager.cancel_session(&session.session_id).await;
+    }
+    Json(serde_json::json!({"ok": true}))
+}
+
+async fn pair_initiate(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<crate::pairing::PairInitiateRequest>,
+) -> Result<Json<crate::pairing::SessionStatus>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::info!(
+        pair_code = %req.pair_code,
+        device_id = %req.device_id,
+        display_name = %req.display_name,
+        "Pair initiation received"
+    );
+
+    state.pairing_manager.initiate_pair(&req).await
+        .map(Json)
+        .map_err(|e| (
+            StatusCode::FORBIDDEN,
+            Json(crate::dto::ErrorDto {
+                code: "INVALID_PAIR_CODE".to_string(),
+                message: e,
+            }),
+        ))
+}
+
+async fn pair_approve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<crate::pairing::ApproveRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    let peer = state.pairing_manager.approve(&req.session_id).await
+        .map_err(|e| (
+            StatusCode::BAD_REQUEST,
+            Json(crate::dto::ErrorDto {
+                code: "APPROVAL_ERROR".to_string(),
+                message: e,
+            }),
+        ))?;
+
+    let friendly = if req.friendly_name.is_empty() {
+        peer.display_name.clone()
+    } else {
+        req.friendly_name.clone()
+    };
+
+    let now = now_epoch();
+    let host = detect_lan_ip();
+    let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
+
+    let device = crate::device_registry::DeviceRecord {
+        device_id: peer.device_id.clone(),
+        system_name: peer.display_name.clone(),
+        friendly_name: friendly,
+        device_type: peer.device_kind.clone(),
+        platform: peer.platform.clone(),
+        version: peer.version.clone(),
+        address: String::new(),
+        last_seen: now,
+        paired_at: now,
+        status: "online".to_string(),
+        capabilities: "{}".to_string(),
+        permissions: "{}".to_string(),
+        public_key: peer.public_key.clone(),
+        endpoints: Vec::new(),
+        preferred_transport: "lan".to_string(),
+        connection_state: "connected".to_string(),
+        fingerprint: peer.fingerprint.clone(),
+        last_verified: now,
+        trust_status: "trusted".to_string(),
+    };
+
+    state.registry.register_device(&device).map_err(|e| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(crate::dto::ErrorDto {
+            code: "REGISTRY_ERROR".to_string(),
+            message: e,
+        }),
+    ))?;
+
+    tracing::info!(
+        device_id = %peer.device_id,
+        display_name = %peer.display_name,
+        "Pair approved and device registered"
+    );
+
+    let pair_complete = serde_json::json!({
+        "source": state.device_id,
+        "destination": peer.device_id,
+        "kind": "request",
+        "version": "1.0.0",
+        "payload": {
+            "type": "pair_complete",
+            "device_id": state.device_id,
+            "system_name": device_name(),
+            "device_type": "desktop",
+            "platform": storageos_core::platform::Platform::current().display_name(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "address": format!("{host}:{port}"),
+            "public_key": state.public_key,
+            "fingerprint": state.fingerprint,
+        }
+    });
+
+    if let Ok(json) = serde_json::to_string(&pair_complete) {
+        let _ = state.relay_handle.send_raw(json);
+        tracing::info!(peer_device = %peer.device_id, "pair_complete sent via relay");
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "device_id": state.device_id,
+        "system_name": device_name(),
+        "device_type": "desktop",
+        "platform": storageos_core::platform::Platform::current().display_name(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "address": format!("{host}:{port}"),
+        "public_key": state.public_key,
+        "fingerprint": state.fingerprint,
+        "paired": true,
+    })))
+}
+
+async fn pair_reject(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<crate::pairing::RejectRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    state.pairing_manager.reject(&req.session_id).await
+        .map_err(|e| (
+            StatusCode::BAD_REQUEST,
+            Json(crate::dto::ErrorDto {
+                code: "REJECT_ERROR".to_string(),
+                message: e,
+            }),
+        ))?;
+
+    tracing::info!(session_id = %req.session_id, "Pair rejected");
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+async fn pair_pending(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<crate::pairing::SessionStatus>> {
+    Json(state.pairing_manager.get_pending_requests().await)
+}
+
+// --- Cross-Network Pairing via Code ---
+
+#[derive(Deserialize)]
+struct ConnectCodeRequest {
+    pair_code: String,
+}
+
+async fn pair_connect_code(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ConnectCodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    let relay_url = state.pairing_manager.relay_url()
+        .ok_or_else(|| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(crate::dto::ErrorDto {
+                code: "NO_RELAY".to_string(),
+                message: "Relay not configured".to_string(),
+            }),
+        ))?;
+
+    let http_url = relay_url
+        .replace("ws://", "http://")
+        .replace("wss://", "https://")
+        .trim_end_matches("/ws")
+        .to_string();
+
+    let normalized = req.pair_code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect::<String>();
+
+    let client = reqwest::Client::new();
+    let lookup_res = client
+        .post(format!("{http_url}/pair/lookup"))
+        .json(&serde_json::json!({"pair_code": normalized}))
+        .send()
+        .await
+        .map_err(|e| (
+            StatusCode::BAD_GATEWAY,
+            Json(crate::dto::ErrorDto {
+                code: "RELAY_ERROR".to_string(),
+                message: format!("Relay lookup failed: {e}"),
+            }),
+        ))?;
+
+    let lookup: serde_json::Value = lookup_res.json().await.map_err(|e| (
+        StatusCode::BAD_GATEWAY,
+        Json(crate::dto::ErrorDto {
+            code: "RELAY_ERROR".to_string(),
+            message: format!("Invalid relay response: {e}"),
+        }),
+    ))?;
+
+    if !lookup.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(crate::dto::ErrorDto {
+                code: "CODE_NOT_FOUND".to_string(),
+                message: "Invalid or expired pairing code".to_string(),
+            }),
+        ));
+    }
+
+    let remote_device_id = lookup.get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let remote_name = lookup.get("display_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+
+    let host = detect_lan_ip();
+    let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
+
+    let pair_initiate_payload = serde_json::json!({
+        "type": "pair_initiate",
+        "pair_code": normalized,
+        "device_id": state.device_id,
+        "display_name": device_name(),
+        "device_kind": "desktop",
+        "platform": storageos_core::platform::Platform::current().display_name(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "public_key": state.public_key,
+        "fingerprint": state.fingerprint,
+        "address": format!("{host}:{port}"),
+        "capabilities": ["browse", "transfer"],
+    });
+
+    let relay_msg = serde_json::json!({
+        "source": state.device_id,
+        "destination": remote_device_id,
+        "kind": "request",
+        "version": "1.0.0",
+        "payload": pair_initiate_payload,
+    });
+
+    state.relay_handle.send_raw(serde_json::to_string(&relay_msg).unwrap_or_default())
+        .map_err(|e| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(crate::dto::ErrorDto {
+                code: "RELAY_SEND_ERROR".to_string(),
+                message: e,
+            }),
+        ))?;
+
+    tracing::info!(
+        remote_device = %remote_device_id,
+        remote_name = %remote_name,
+        "Pair initiate sent via relay"
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "remote_device_id": remote_device_id,
+        "remote_name": remote_name,
+        "method": "relay",
+    })))
 }
 
 // --- Mutual Pairing ---

@@ -8,6 +8,7 @@ mod dto;
 mod file_service;
 mod identity;
 mod logging;
+mod pairing;
 mod presence;
 mod relay;
 mod relay_handle;
@@ -111,17 +112,41 @@ async fn main() {
 
     tracing::info!("Local Storage Provider registered");
 
+    if cfg.relay.url.is_none() {
+        let ip = server::detect_lan_ip();
+        if ip != "127.0.0.1" {
+            let url = format!("ws://{}:{}/ws", ip, storageos_core::config::constants::DEFAULT_RELAY_PORT);
+            tracing::info!(relay_url = %url, "Auto-detected relay URL from LAN IP");
+            cfg.relay.url = Some(url);
+        }
+    }
+
     presence::spawn_presence_poller(registry.clone());
     tracing::info!("Presence poller started (12s interval)");
+
+    let (pair_event_tx, pair_event_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let (relay_state_rx, relay_handle) = relay::spawn_relay_client(relay::RelayContext {
         device_id: device_id.clone(),
         public_key: device_keys.public_key_hex.clone(),
         fingerprint: device_keys.fingerprint.clone(),
         config: cfg.relay.clone(),
+        pair_event_tx: Some(pair_event_tx),
     });
 
     let tray_rx = tray::spawn(cfg.log_dir());
+
+    let signing_key = identity::load_signing_key(&*registry);
+
+    let pairing_manager = pairing::PairingManager::new(
+        device_id.clone(),
+        device_keys.public_key_hex.clone(),
+        device_keys.fingerprint.clone(),
+        cfg.relay.url.clone(),
+        signing_key,
+    );
+
+    spawn_pair_event_handler(pair_event_rx, pairing_manager.clone(), registry.clone(), relay_handle.clone());
 
     let state = Arc::new(AppState::new(
         registry,
@@ -130,6 +155,7 @@ async fn main() {
         device_keys.fingerprint,
         relay_state_rx,
         relay_handle,
+        pairing_manager,
     ));
     let app = server::router(state);
 
@@ -165,6 +191,109 @@ async fn main() {
     }
 
     tracing::info!("StorageOS Agent stopped");
+}
+
+fn spawn_pair_event_handler(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<relay::PairRelayEvent>,
+    pairing_manager: Arc<pairing::PairingManager>,
+    registry: Arc<DeviceRegistry>,
+    relay_handle: relay_handle::RelayHandle,
+) {
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let payload_type = event.payload.get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+
+            match payload_type {
+                "pair_initiate" => {
+                    let req = pairing::PairInitiateRequest {
+                        pair_code: event.payload.get("pair_code")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        device_id: event.payload.get("device_id")
+                            .and_then(|v| v.as_str()).unwrap_or(&event.source_device_id).to_string(),
+                        display_name: event.payload.get("display_name")
+                            .and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                        device_kind: event.payload.get("device_kind")
+                            .and_then(|v| v.as_str()).unwrap_or("phone").to_string(),
+                        platform: event.payload.get("platform")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        version: event.payload.get("version")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        public_key: event.payload.get("public_key")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        fingerprint: event.payload.get("fingerprint")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        capabilities: vec![],
+                    };
+
+                    tracing::info!(
+                        source = %event.source_device_id,
+                        display_name = %req.display_name,
+                        "Relay pair_initiate → PairingManager"
+                    );
+
+                    match pairing_manager.initiate_pair(&req).await {
+                        Ok(_) => tracing::info!("Pair session created from relay"),
+                        Err(e) => tracing::warn!(error = %e, "Failed to create pair session from relay"),
+                    }
+                }
+                "pair_complete" => {
+                    let device_id = event.payload.get("device_id")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let system_name = event.payload.get("system_name")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let device_type = event.payload.get("device_type")
+                        .and_then(|v| v.as_str()).unwrap_or("desktop").to_string();
+                    let platform = event.payload.get("platform")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let version = event.payload.get("version")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let public_key = event.payload.get("public_key")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let fingerprint = event.payload.get("fingerprint")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let address = event.payload.get("address")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    let device = device_registry::DeviceRecord {
+                        device_id: device_id.clone(),
+                        system_name: system_name.clone(),
+                        friendly_name: system_name,
+                        device_type,
+                        platform,
+                        version,
+                        address,
+                        last_seen: now,
+                        paired_at: now,
+                        status: "online".to_string(),
+                        capabilities: "{}".to_string(),
+                        permissions: "{}".to_string(),
+                        public_key,
+                        endpoints: Vec::new(),
+                        preferred_transport: "relay".to_string(),
+                        connection_state: "connected".to_string(),
+                        fingerprint,
+                        last_verified: now,
+                        trust_status: "trusted".to_string(),
+                    };
+
+                    match registry.register_device(&device) {
+                        Ok(_) => tracing::info!(device_id = %device_id, "Remote device registered via relay pair_complete"),
+                        Err(e) => tracing::warn!(error = %e, "Failed to register device from pair_complete"),
+                    }
+                }
+                _ => {
+                    tracing::debug!(payload_type = %payload_type, "Unhandled pair relay event");
+                }
+            }
+        }
+    });
 }
 
 async fn shutdown_signal(tray_rx: std::sync::mpsc::Receiver<tray::TrayCommand>) {

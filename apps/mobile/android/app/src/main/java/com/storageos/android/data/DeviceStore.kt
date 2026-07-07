@@ -61,6 +61,14 @@ class DeviceStore(context: Context) {
         }
     }
 
+    fun saveRelayUrl(url: String) {
+        prefs.edit().putString(RELAY_URL_KEY, url).apply()
+    }
+
+    fun getRelayUrl(): String? {
+        return prefs.getString(RELAY_URL_KEY, null)
+    }
+
     fun clear() {
         prefs.edit().remove(KEY).apply()
     }
@@ -68,5 +76,6 @@ class DeviceStore(context: Context) {
     companion object {
         private const val KEY = "paired_devices"
         private const val DEVICE_ID_KEY = "this_device_id"
+        private const val RELAY_URL_KEY = "relay_url"
     }
 }

@@ -42,8 +42,19 @@ impl From<&ConnectedDevice> for DevicePresence {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PairCodeEntry {
+    pub pair_code: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub fingerprint: String,
+    pub registered_at: i64,
+    pub ttl_secs: u64,
+}
+
 pub struct ConnectionRegistry {
     devices: RwLock<HashMap<String, ConnectedDevice>>,
+    pair_codes: RwLock<HashMap<String, PairCodeEntry>>,
     max_connections: usize,
 }
 
@@ -51,6 +62,7 @@ impl ConnectionRegistry {
     pub fn new(max_connections: usize) -> Self {
         Self {
             devices: RwLock::new(HashMap::new()),
+            pair_codes: RwLock::new(HashMap::new()),
             max_connections,
         }
     }
@@ -128,6 +140,39 @@ impl ConnectionRegistry {
             .values()
             .map(DevicePresence::from)
             .collect()
+    }
+
+    pub async fn register_pair_code(&self, entry: PairCodeEntry) {
+        let code = entry.pair_code.clone();
+        let mut codes = self.pair_codes.write().await;
+        tracing::info!(
+            pair_code = %code,
+            device_id = %entry.device_id,
+            ttl = entry.ttl_secs,
+            "Pair code registered"
+        );
+        codes.insert(code, entry);
+    }
+
+    pub async fn resolve_pair_code(&self, code: &str) -> Option<PairCodeEntry> {
+        let codes = self.pair_codes.read().await;
+        let entry = codes.get(code)?;
+        let now = now_epoch();
+        if now - entry.registered_at > entry.ttl_secs as i64 {
+            return None;
+        }
+        Some(entry.clone())
+    }
+
+    pub async fn cleanup_expired_codes(&self) {
+        let mut codes = self.pair_codes.write().await;
+        let now = now_epoch();
+        let before = codes.len();
+        codes.retain(|_, entry| now - entry.registered_at <= entry.ttl_secs as i64);
+        let removed = before - codes.len();
+        if removed > 0 {
+            tracing::debug!(removed, "Expired pair codes cleaned up");
+        }
     }
 
     pub async fn stale_devices(&self, timeout_secs: u64) -> Vec<String> {

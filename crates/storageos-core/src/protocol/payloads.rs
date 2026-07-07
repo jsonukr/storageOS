@@ -38,6 +38,14 @@ pub enum Payload {
     Presence(PresencePayload),
     DeviceInfo(DeviceInfoPayload),
     Error(ErrorPayload),
+    PairInitiate(PairInitiatePayload),
+    PairPending(PairPendingPayload),
+    PairApprove(PairApprovePayload),
+    PairReject(PairRejectPayload),
+    PairComplete(PairCompletePayload),
+    PairCodeRegister(PairCodeRegisterPayload),
+    PairCodeResolve(PairCodeResolvePayload),
+    PairCodeResult(PairCodeResultPayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,4 +278,85 @@ pub struct ErrorPayload {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+}
+
+// --- PM6: Universal Pairing Payloads ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairInitiatePayload {
+    pub pair_code: String,
+    pub device_id: DeviceId,
+    pub display_name: String,
+    pub device_kind: DeviceKind,
+    pub platform: String,
+    pub version: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairPendingPayload {
+    pub session_id: String,
+    pub peer_display_name: String,
+    pub peer_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairApprovePayload {
+    pub session_id: String,
+    pub device_id: DeviceId,
+    pub display_name: String,
+    pub device_kind: DeviceKind,
+    pub platform: String,
+    pub version: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub address: String,
+    pub endpoints: Vec<EndpointInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairRejectPayload {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairCompletePayload {
+    pub session_id: String,
+    pub device_id: DeviceId,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairCodeRegisterPayload {
+    pub pair_code: String,
+    pub device_id: DeviceId,
+    pub display_name: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub capabilities: Vec<String>,
+    pub ttl_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairCodeResolvePayload {
+    pub pair_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairCodeResultPayload {
+    pub found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<DeviceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
 }

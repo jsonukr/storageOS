@@ -1,4 +1,5 @@
 pub mod envelope;
+pub mod pairing;
 pub mod payloads;
 
 pub use envelope::{Message, MessageId, MessageKind, ProtocolVersion};

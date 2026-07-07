@@ -7,7 +7,7 @@ use storageos_core::protocol::{self, CURRENT_VERSION};
 use storageos_core::protocol::payloads::Payload;
 use tokio::sync::mpsc;
 
-use crate::registry::{ConnectedDevice, ConnectionRegistry};
+use crate::registry::{ConnectedDevice, ConnectionRegistry, PairCodeEntry};
 
 pub async fn handle_connection(
     socket: WebSocket,
@@ -158,7 +158,7 @@ async fn run_session(
                     Some(Ok(Message::Text(text))) => {
                         last_activity = tokio::time::Instant::now();
                         registry.update_last_seen(device_id).await;
-                        handle_text_message(device_id, &text, registry).await;
+                        handle_text_message(device_id, &text, registry, ws_sink).await;
                     }
                     Some(Ok(Message::Ping(data))) => {
                         last_activity = tokio::time::Instant::now();
@@ -224,10 +224,13 @@ async fn handle_text_message(
     source_id: &str,
     text: &str,
     registry: &Arc<ConnectionRegistry>,
+    ws_sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) {
     #[derive(serde::Deserialize)]
     struct Envelope {
         destination: storageos_core::models::device::DeviceId,
+        #[serde(default)]
+        payload: Option<serde_json::Value>,
     }
 
     let envelope: Envelope = match serde_json::from_str(text) {
@@ -245,6 +248,21 @@ async fn handle_text_message(
     let dest_id = &envelope.destination.0;
 
     if dest_id == "relay" || dest_id.is_empty() {
+        if let Some(ref payload) = envelope.payload {
+            if let Some(payload_type) = payload.get("type").and_then(|t| t.as_str()) {
+                match payload_type {
+                    "pair_code_register" => {
+                        handle_pair_code_register(source_id, payload, registry).await;
+                        return;
+                    }
+                    "pair_code_resolve" => {
+                        handle_pair_code_resolve(source_id, payload, registry, ws_sink).await;
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
         tracing::debug!(source = %source_id, "Message addressed to relay (ignored)");
         return;
     }
@@ -262,6 +280,92 @@ async fn handle_text_message(
             destination = %dest_id,
             "Destination not connected"
         );
+    }
+}
+
+async fn handle_pair_code_register(
+    source_id: &str,
+    payload: &serde_json::Value,
+    registry: &Arc<ConnectionRegistry>,
+) {
+    #[derive(serde::Deserialize)]
+    struct RegisterPayload {
+        pair_code: String,
+        device_id: storageos_core::models::device::DeviceId,
+        display_name: String,
+        #[serde(default)]
+        fingerprint: String,
+        #[serde(default = "default_ttl")]
+        ttl_secs: u64,
+    }
+    fn default_ttl() -> u64 { 300 }
+
+    let reg: RegisterPayload = match serde_json::from_value(payload.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(source = %source_id, error = %e, "Invalid pair code register payload");
+            return;
+        }
+    };
+
+    registry.register_pair_code(PairCodeEntry {
+        pair_code: reg.pair_code,
+        device_id: reg.device_id.0,
+        display_name: reg.display_name,
+        fingerprint: reg.fingerprint,
+        registered_at: now_epoch(),
+        ttl_secs: reg.ttl_secs,
+    }).await;
+}
+
+async fn handle_pair_code_resolve(
+    source_id: &str,
+    payload: &serde_json::Value,
+    registry: &Arc<ConnectionRegistry>,
+    ws_sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+) {
+    #[derive(serde::Deserialize)]
+    struct ResolvePayload {
+        pair_code: String,
+    }
+
+    let resolve: ResolvePayload = match serde_json::from_value(payload.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(source = %source_id, error = %e, "Invalid pair code resolve payload");
+            return;
+        }
+    };
+
+    let result = registry.resolve_pair_code(&resolve.pair_code).await;
+
+    let response = match result {
+        Some(entry) => serde_json::json!({
+            "destination": source_id,
+            "source": "relay",
+            "kind": "response",
+            "payload": {
+                "type": "pair_code_result",
+                "found": true,
+                "device_id": entry.device_id,
+                "display_name": entry.display_name,
+                "fingerprint": entry.fingerprint,
+            }
+        }),
+        None => serde_json::json!({
+            "destination": source_id,
+            "source": "relay",
+            "kind": "response",
+            "payload": {
+                "type": "pair_code_result",
+                "found": false,
+            }
+        }),
+    };
+
+    let json = serde_json::to_string(&response).unwrap_or_default();
+    if let Err(e) = ws_sink.send(Message::Text(json)).await {
+        tracing::warn!(error = %e, "Failed to send pair code result");
     }
 }
 
