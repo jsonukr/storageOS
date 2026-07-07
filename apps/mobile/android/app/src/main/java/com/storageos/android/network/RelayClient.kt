@@ -61,7 +61,7 @@ class RelayClient(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(90, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MINUTES)
         .pingInterval(30, TimeUnit.SECONDS)
         .build()

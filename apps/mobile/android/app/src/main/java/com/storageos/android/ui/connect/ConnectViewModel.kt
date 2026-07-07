@@ -197,8 +197,8 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     .trimEnd('/').removeSuffix("/ws")
 
                 val okClient = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .connectTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
 
                 val pairCode = v2.code.replace("-", "")
