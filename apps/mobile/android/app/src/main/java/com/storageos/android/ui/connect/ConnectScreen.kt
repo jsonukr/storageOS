@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -163,8 +164,68 @@ fun ConnectScreen(
                     }
                 }
 
+                Spacer(Modifier.height(24.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    text = "Enter Pairing Code",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = state.pairingCode,
+                    onValueChange = viewModel::onPairingCodeChanged,
+                    label = { Text("Pairing Code") },
+                    placeholder = { Text("XXXX-XXXX-XXXX") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { viewModel.submitPairingCode(onConnected) },
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.isConnecting,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = { viewModel.submitPairingCode(onConnected) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    enabled = !state.isConnecting && state.pairingCode.replace("-", "").length >= 8,
+                ) {
+                    if (state.isConnecting) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text("Connecting…")
+                        }
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Link,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Connect with Code")
+                    }
+                }
+
                 if (state.savedDevices.isNotEmpty()) {
                     Spacer(Modifier.height(24.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(16.dp))
 
                     Text(
                         text = "Saved Devices",

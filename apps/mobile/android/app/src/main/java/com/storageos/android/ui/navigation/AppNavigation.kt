@@ -39,7 +39,7 @@ fun AppNavigation() {
                 onConnected = { api ->
                     connectedApi = api
                     val s = connectViewModel.state.value
-                    agentBaseUrl = "http://${s.host}:${s.port}"
+                    agentBaseUrl = if (s.host.isNotBlank()) "http://${s.host}:${s.port}" else ""
                     navController.navigate("browser") {
                         popUpTo("connect") { inclusive = true }
                     }

@@ -58,7 +58,10 @@ class PairViewModel : ViewModel() {
 
         val url = relayUrl
         if (url != null) {
-            relay = RelayClient(id, url).also { it.connect() }
+            relay = RelayClient(id, url).also {
+                it.enableBrowseHandler()
+                it.connect()
+            }
         }
 
         generateSession()

@@ -199,11 +199,45 @@ fn device_name() -> String {
         .unwrap_or_else(|| "StorageOS".to_string())
 }
 
+fn register_pair_code_with_relay(state: &Arc<AppState>, pair_code: &str) {
+    let register_payload = serde_json::json!({
+        "type": "pair_code_register",
+        "pair_code": pair_code,
+        "device_id": state.device_id,
+        "display_name": device_name(),
+        "fingerprint": state.fingerprint,
+        "ttl_secs": 300
+    });
+
+    let msg = serde_json::json!({
+        "version": { "major": 1, "minor": 0 },
+        "id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+        "source": state.device_id,
+        "destination": "relay",
+        "kind": "request",
+        "payload": register_payload
+    });
+
+    match serde_json::to_string(&msg) {
+        Ok(json) => {
+            if let Err(e) = state.relay_handle.send_raw(json) {
+                tracing::warn!(error = %e, "Failed to register pair code with relay");
+            } else {
+                tracing::info!(pair_code = %pair_code, "Pair code registered with relay");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "Failed to serialize pair code register message"),
+    }
+}
+
 async fn pair_info(State(state): State<Arc<AppState>>) -> Response {
     let session = state.pairing_manager.create_session().await;
     let host = detect_lan_ip();
     let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
     let lan_hint = format!("{host}:{port}");
+
+    register_pair_code_with_relay(&state, &session.pair_code);
 
     let qr_payload = state.pairing_manager.generate_qr_payload(
         &session.pair_code,
@@ -230,6 +264,8 @@ async fn pair_qr(State(state): State<Arc<AppState>>) -> Response {
     let host = detect_lan_ip();
     let port = storageos_core::config::constants::DEFAULT_AGENT_PORT;
     let lan_hint = format!("{host}:{port}");
+
+    register_pair_code_with_relay(&state, &session.pair_code);
 
     let qr_payload = state.pairing_manager.generate_qr_payload(
         &session.pair_code,
@@ -267,6 +303,8 @@ async fn create_pair_session(
     State(state): State<Arc<AppState>>,
 ) -> Json<crate::pairing::SessionStatus> {
     let session = state.pairing_manager.create_session().await;
+
+    register_pair_code_with_relay(&state, &session.pair_code);
 
     tracing::info!(
         session_id = %session.session_id,

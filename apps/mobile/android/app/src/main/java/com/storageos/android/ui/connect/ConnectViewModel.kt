@@ -8,23 +8,33 @@ import com.storageos.android.api.PairDeviceRequest
 import com.storageos.android.api.PairInitiateV2Request
 import com.storageos.android.data.DeviceStore
 import com.storageos.android.data.SavedDevice
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.util.Log
+import com.storageos.android.data.DeviceIdentity
+import com.storageos.android.network.RelayAgentApi
+import com.storageos.android.network.RelayClient
 import java.net.Inet4Address
 import java.net.NetworkInterface
+
+private const val TAG = "ConnectVM"
+private const val PAIR_CODE_CHARSET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
 private const val DEFAULT_RELAY_URL = "wss://storageos.onrender.com/ws"
 
 data class ConnectUiState(
     val host: String = "",
     val port: String = "19742",
+    val pairingCode: String = "",
     val isConnecting: Boolean = false,
     val error: String? = null,
     val agentVersion: String? = null,
@@ -92,10 +102,115 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         _state.value = _state.value.copy(port = value, error = null)
     }
 
+    fun onPairingCodeChanged(value: String) {
+        val filtered = value.uppercase().filter { it in PAIR_CODE_CHARSET || it == '-' }
+        _state.value = _state.value.copy(pairingCode = filtered, error = null)
+    }
+
+    fun submitPairingCode(onConnected: (AgentApi) -> Unit) {
+        val code = _state.value.pairingCode.replace("-", "").trim()
+        if (code.length < 8) {
+            _state.value = _state.value.copy(error = "Enter a valid pairing code")
+            return
+        }
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isConnecting = true, error = null)
+            try {
+                val lookupResult = withContext(Dispatchers.IO) {
+                    val httpUrl = DEFAULT_RELAY_URL
+                        .replace("ws://", "http://")
+                        .replace("wss://", "https://")
+                        .trimEnd('/').removeSuffix("/ws")
+
+                    val okClient = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    val bodyStr = """{"pair_code":"$code"}"""
+                    val mediaType = "application/json".toMediaType()
+                    val request = okhttp3.Request.Builder()
+                        .url("$httpUrl/pair/lookup")
+                        .post(bodyStr.toRequestBody(mediaType))
+                        .build()
+
+                    Log.i(TAG, "Pairing code lookup: $code")
+                    val response = okClient.newCall(request).execute()
+                    val body = response.body?.string() ?: "{}"
+                    Log.i(TAG, "Pairing code lookup response: $body")
+                    json.decodeFromString<PairLookupResult>(body)
+                }
+
+                if (!lookupResult.found) {
+                    _state.value = _state.value.copy(
+                        isConnecting = false,
+                        error = "Pairing code not found or expired.",
+                    )
+                    return@launch
+                }
+
+                connectViaRelay(lookupResult.deviceId, lookupResult.displayName, onConnected)
+            } catch (e: Exception) {
+                Log.e(TAG, "Pairing code lookup failed", e)
+                _state.value = _state.value.copy(
+                    isConnecting = false,
+                    error = "Failed to look up pairing code: ${e.message}",
+                )
+            }
+        }
+    }
+
+    private suspend fun connectViaRelay(
+        targetDeviceId: String,
+        targetName: String,
+        onConnected: (AgentApi) -> Unit,
+    ) {
+        val context = getApplication<Application>()
+        val identity = DeviceIdentity(context)
+        val relay = RelayClient(identity, DEFAULT_RELAY_URL)
+        relay.enableBrowseHandler()
+        relay.connect()
+
+        // Wait for relay connection (up to 90s for Render cold start)
+        var connected = false
+        for (i in 0 until 900) {
+            if (relay.connected.value) { connected = true; break }
+            withContext(Dispatchers.IO) { Thread.sleep(100) }
+        }
+
+        if (!connected) {
+            relay.disconnect()
+            _state.value = _state.value.copy(
+                isConnecting = false,
+                error = "Could not connect to relay server.",
+            )
+            return
+        }
+
+        Log.i(TAG, "Relay connected, creating RelayAgentApi for $targetDeviceId")
+        val relayApi = RelayAgentApi(relay, targetDeviceId)
+
+        deviceStore.save(SavedDevice(
+            deviceId = targetDeviceId,
+            host = "",
+            port = 0,
+            name = targetName,
+        ))
+        _state.value = _state.value.copy(
+            isConnecting = false,
+            savedDevices = deviceStore.loadAll(),
+        )
+
+        onConnected(relayApi)
+    }
+
     fun onQrScanned(rawValue: String, onConnected: (AgentApi) -> Unit) {
+        Log.i(TAG, "onQrScanned: ${rawValue.take(200)}")
         try {
             if (rawValue.contains("\"v\"") && (rawValue.contains("\"v\":2") || rawValue.contains("\"v\": 2"))) {
                 val v2 = json.decodeFromString<QrPayloadV2>(rawValue)
+                Log.i(TAG, "V2 QR: id=${v2.id} relay=${v2.relay} hint=${v2.hint?.lan} code=${v2.code}")
                 handleV2Qr(v2, onConnected)
             } else {
                 val payload = json.decodeFromString<QrPayload>(rawValue)
@@ -129,9 +244,11 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             _state.value = _state.value.copy(isConnecting = true, error = null)
 
             if (host.isNotBlank()) {
+                Log.i(TAG, "Trying LAN hint: $host:$port")
                 try {
                     val client = AgentApi.create(host, port)
                     val health = client.health()
+                    Log.i(TAG, "LAN health: ${health.status}")
                     if (health.status == "ok") {
                         val pairCode = v2.code.replace("-", "")
                         try {
@@ -181,6 +298,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
             // Cross-network: use relay to send pair initiate
             val relayUrl = v2.relay
+            Log.i(TAG, "LAN failed, trying relay: $relayUrl")
             if (relayUrl.isNullOrBlank()) {
                 _state.value = _state.value.copy(
                     isConnecting = false,
@@ -191,28 +309,33 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
             try {
                 deviceStore.saveRelayUrl(relayUrl)
-                val httpUrl = relayUrl
-                    .replace("ws://", "http://")
-                    .replace("wss://", "https://")
-                    .trimEnd('/').removeSuffix("/ws")
 
-                val okClient = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
+                val lookupResult = withContext(Dispatchers.IO) {
+                    val httpUrl = relayUrl
+                        .replace("ws://", "http://")
+                        .replace("wss://", "https://")
+                        .trimEnd('/').removeSuffix("/ws")
 
-                val pairCode = v2.code.replace("-", "")
-                val bodyStr = """{"pair_code":"$pairCode"}"""
-                val mediaType = "application/json".toMediaType()
+                    val okClient = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
 
-                val lookupRequest = okhttp3.Request.Builder()
-                    .url("$httpUrl/pair/lookup")
-                    .post(bodyStr.toRequestBody(mediaType))
-                    .build()
+                    val pairCode = v2.code.replace("-", "")
+                    val bodyStr = """{"pair_code":"$pairCode"}"""
+                    val mediaType = "application/json".toMediaType()
 
-                val lookupResponse = okClient.newCall(lookupRequest).execute()
-                val lookupBody = lookupResponse.body?.string() ?: "{}"
-                val lookupResult = json.decodeFromString<PairLookupResult>(lookupBody)
+                    val lookupRequest = okhttp3.Request.Builder()
+                        .url("$httpUrl/pair/lookup")
+                        .post(bodyStr.toRequestBody(mediaType))
+                        .build()
+
+                    Log.i(TAG, "POST $httpUrl/pair/lookup body=$bodyStr")
+                    val lookupResponse = okClient.newCall(lookupRequest).execute()
+                    val lookupBody = lookupResponse.body?.string() ?: "{}"
+                    Log.i(TAG, "Lookup response: code=${lookupResponse.code} body=$lookupBody")
+                    json.decodeFromString<PairLookupResult>(lookupBody)
+                }
 
                 if (!lookupResult.found) {
                     _state.value = _state.value.copy(
@@ -222,18 +345,38 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
+                val hintHost = v2.hint?.lan?.split(":")?.getOrNull(0) ?: ""
+                val hintPort = v2.hint?.lan?.split(":")?.getOrNull(1)?.toIntOrNull() ?: 19743
+
                 deviceStore.save(com.storageos.android.data.SavedDevice(
                     deviceId = v2.id,
-                    host = "",
-                    port = 0,
+                    host = hintHost,
+                    port = hintPort,
                     name = v2.name,
                 ))
                 _state.value = _state.value.copy(
                     isConnecting = false,
                     savedDevices = deviceStore.loadAll(),
-                    error = "Pair request sent via relay. Waiting for approval on ${v2.name}.",
                 )
+
+                if (hintHost.isNotBlank()) {
+                    try {
+                        val client = withContext(Dispatchers.IO) {
+                            val c = AgentApi.create(hintHost, hintPort)
+                            c.health()
+                            c
+                        }
+                        api = client
+                        onConnected(client)
+                        return@launch
+                    } catch (_: Exception) {
+                        Log.i(TAG, "LAN retry failed, connecting via relay")
+                    }
+                }
+
+                connectViaRelay(v2.id, v2.name, onConnected)
             } catch (e: Exception) {
+                Log.e(TAG, "Relay connection failed", e)
                 _state.value = _state.value.copy(
                     isConnecting = false,
                     error = "Relay connection failed: ${e.message}",
