@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Message>>>>;
+pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>>;
 
 #[derive(Clone)]
 pub struct RelayHandle {
@@ -43,6 +43,18 @@ impl RelayHandle {
         destination: &str,
         payload: Payload,
     ) -> Result<Message, String> {
+        let raw = self.request_raw(destination, payload).await?;
+
+        serde_json::from_value::<Message>(raw.clone()).map_err(|e| {
+            format!("Failed to parse relay response as Message: {e}")
+        })
+    }
+
+    pub async fn request_raw(
+        &self,
+        destination: &str,
+        payload: Payload,
+    ) -> Result<serde_json::Value, String> {
         let request_id = MessageId::new(uuid::Uuid::new_v4().to_string());
 
         let msg = Message {
@@ -76,8 +88,16 @@ impl RelayHandle {
 
         match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => {
-                if let Payload::Error(ref err) = response.payload {
-                    return Err(format!("{}: {}", err.code as u8, err.message));
+                if let Some(payload) = response.get("payload") {
+                    if let Some(ptype) = payload.get("type").and_then(|t| t.as_str()) {
+                        if ptype == "error" || ptype == "error_response" {
+                            let msg = payload.get("message")
+                                .or_else(|| payload.get("error"))
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("Unknown error");
+                            return Err(msg.to_string());
+                        }
+                    }
                 }
                 Ok(response)
             }
@@ -90,16 +110,5 @@ impl RelayHandle {
                 Err("Request timed out".to_string())
             }
         }
-    }
-
-    pub async fn resolve_response(&self, msg: Message) -> bool {
-        if let Some(ref req_id) = msg.request_id {
-            let mut pending = self.pending.lock().await;
-            if let Some(tx) = pending.remove(&req_id.0) {
-                let _ = tx.send(msg);
-                return true;
-            }
-        }
-        false
     }
 }

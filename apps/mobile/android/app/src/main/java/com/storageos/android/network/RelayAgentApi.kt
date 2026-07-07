@@ -1,5 +1,6 @@
 package com.storageos.android.network
 
+import android.util.Base64
 import android.util.Log
 import com.storageos.android.api.AgentApi
 import com.storageos.android.api.DirectoryEntry
@@ -21,7 +22,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.booleanOrNull
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -40,7 +45,10 @@ class RelayAgentApi(
 
     init {
         relay.addResponseHandler { msg ->
-            val requestId = msg.payload["request_id"]?.jsonPrimitive?.content
+            // Check envelope-level request_id first (Desktop Agent responses),
+            // then fall back to payload-level request_id (Android responses)
+            val requestId = msg.requestId
+                ?: msg.payload["request_id"]?.jsonPrimitive?.contentOrNull
             if (requestId != null) {
                 pendingRequests.remove(requestId)?.invoke(msg)
             }
@@ -62,7 +70,9 @@ class RelayAgentApi(
                     }
                 }
                 cont.invokeOnCancellation { pendingRequests.remove(requestId) }
-                relay.sendMessage(targetDeviceId, payload)
+                // Use requestId as the envelope message ID so Desktop Agent echoes it
+                // back in the response's envelope-level request_id field
+                relay.sendMessage(targetDeviceId, payload, messageId = requestId)
             }
         }
     }
@@ -74,9 +84,10 @@ class RelayAgentApi(
             put("request_id", requestId)
         }
         val response = sendAndWait(payload)
-        val data = response.payload["data"]?.jsonPrimitive?.contentOrNull
-            ?: throw RuntimeException("No data in health response")
-        return json.decodeFromString(data)
+        val p = response.payload
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        if (dataStr != null) return json.decodeFromString(dataStr)
+        return json.decodeFromString(p.toString())
     }
 
     override suspend fun roots(): List<DriveInfo> {
@@ -86,9 +97,10 @@ class RelayAgentApi(
             put("request_id", requestId)
         }
         val response = sendAndWait(payload)
-        val data = response.payload["data"]?.jsonPrimitive?.contentOrNull
-            ?: throw RuntimeException("No data in roots response")
-        return json.decodeFromString(data)
+        val p = response.payload
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        if (dataStr != null) return json.decodeFromString(dataStr)
+        return parseRootsFromDomainPayload(p)
     }
 
     override suspend fun directory(path: String): List<DirectoryEntry> {
@@ -99,24 +111,150 @@ class RelayAgentApi(
             put("path", path)
         }
         val response = sendAndWait(payload)
-        val data = response.payload["data"]?.jsonPrimitive?.contentOrNull
-            ?: throw RuntimeException("No data in directory response")
-        return json.decodeFromString(data)
+        val p = response.payload
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        if (dataStr != null) return json.decodeFromString(dataStr)
+        return parseEntriesFromDomainPayload(p)
     }
 
     override suspend fun mkdir(request: MkdirRequest): OperationResponse {
-        Log.w(TAG, "mkdir not supported via relay yet")
-        throw UnsupportedOperationException("mkdir not supported via relay")
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "mkdir_request")
+            put("request_id", requestId)
+            put("parent", request.parent)
+            put("name", request.name)
+        }
+        val response = sendAndWait(payload)
+        return parseOperationResponse(response.payload)
     }
 
     override suspend fun rename(request: RenameRequest): OperationResponse {
-        Log.w(TAG, "rename not supported via relay yet")
-        throw UnsupportedOperationException("rename not supported via relay")
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "rename_request")
+            put("request_id", requestId)
+            put("path", request.path)
+            put("new_name", request.newName)
+        }
+        val response = sendAndWait(payload)
+        return parseOperationResponse(response.payload)
     }
 
     override suspend fun deleteEntry(path: String): OperationResponse {
-        Log.w(TAG, "delete not supported via relay yet")
-        throw UnsupportedOperationException("delete not supported via relay")
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "delete_request")
+            put("request_id", requestId)
+            put("path", path)
+        }
+        val response = sendAndWait(payload)
+        return parseOperationResponse(response.payload)
+    }
+
+    private fun parseRootsFromDomainPayload(p: JsonObject): List<DriveInfo> {
+        val rootsArray = p["roots"]?.jsonArray
+            ?: throw RuntimeException("No roots in response: $p")
+        return rootsArray.map { elem ->
+            val root = elem.jsonObject
+            val metadata = root["metadata"]?.jsonObject
+            val capacity = root["capacity"]?.jsonObject
+            val custom = metadata?.get("custom")?.jsonObject
+            DriveInfo(
+                letter = custom?.get("drive_letter")?.jsonPrimitive?.contentOrNull
+                    ?: root["id"]?.jsonPrimitive?.content ?: "",
+                label = custom?.get("volume_label")?.jsonPrimitive?.contentOrNull
+                    ?: root["name"]?.jsonPrimitive?.content ?: "",
+                driveType = custom?.get("windows_drive_type")?.jsonPrimitive?.contentOrNull
+                    ?: root["kind"]?.jsonPrimitive?.content ?: "unknown",
+                totalBytes = capacity?.get("total_bytes")?.jsonPrimitive?.long ?: 0L,
+                freeBytes = capacity?.get("free_bytes")?.jsonPrimitive?.long ?: 0L,
+                usedBytes = capacity?.get("used_bytes")?.jsonPrimitive?.long ?: 0L,
+                fileSystem = metadata?.get("file_system")?.jsonPrimitive?.contentOrNull ?: "",
+                isRemovable = metadata?.get("is_removable")?.jsonPrimitive?.booleanOrNull ?: false,
+                isReady = metadata?.get("is_ready")?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+        }
+    }
+
+    private fun parseEntriesFromDomainPayload(p: JsonObject): List<DirectoryEntry> {
+        val entriesArray = p["entries"]?.jsonArray
+            ?: throw RuntimeException("No entries in response: $p")
+        return entriesArray.map { elem ->
+            val entry = elem.jsonObject
+            val metadata = entry["metadata"]?.jsonObject
+            DirectoryEntry(
+                name = entry["name"]?.jsonPrimitive?.content ?: "",
+                fullPath = entry["path"]?.jsonPrimitive?.content ?: "",
+                isDirectory = entry["kind"]?.jsonPrimitive?.content == "folder",
+                size = entry["size"]?.jsonPrimitive?.long ?: 0L,
+                lastModified = entry["modified_at"]?.jsonPrimitive?.long ?: 0L,
+                dateCreated = entry["created_at"]?.jsonPrimitive?.long ?: 0L,
+                hidden = metadata?.get("hidden")?.jsonPrimitive?.booleanOrNull ?: false,
+                readonly = metadata?.get("readonly")?.jsonPrimitive?.booleanOrNull ?: false,
+                extension = metadata?.get("extension")?.jsonPrimitive?.contentOrNull ?: "",
+            )
+        }
+    }
+
+    private fun parseOperationResponse(p: JsonObject): OperationResponse {
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        if (dataStr != null) return json.decodeFromString(dataStr)
+        return OperationResponse(
+            success = p["success"]?.jsonPrimitive?.booleanOrNull ?: false,
+            path = p["path"]?.jsonPrimitive?.contentOrNull ?: "",
+        )
+    }
+
+    suspend fun uploadFile(
+        destDir: String,
+        fileName: String,
+        fileBytes: ByteArray,
+        onProgress: ((Long, Long) -> Unit)? = null,
+    ): OperationResponse {
+        val transferId = UUID.randomUUID().toString()
+        val totalBytes = fileBytes.size.toLong()
+
+        val startPayload = buildJsonObject {
+            put("type", "upload_start")
+            put("request_id", UUID.randomUUID().toString())
+            put("transfer_id", transferId)
+            put("path", destDir)
+            put("file_name", fileName)
+            put("total_bytes", totalBytes)
+        }
+        val startResp = sendAndWait(startPayload)
+        val respType = startResp.payload["type"]?.jsonPrimitive?.contentOrNull
+        if (respType != "upload_ready") {
+            throw RuntimeException("Device not ready for upload: $respType")
+        }
+
+        val chunkSize = 256 * 1024
+        var offset = 0L
+        while (offset < totalBytes) {
+            val end = minOf(offset + chunkSize, totalBytes).toInt()
+            val chunk = fileBytes.copyOfRange(offset.toInt(), end)
+            val isLast = end.toLong() >= totalBytes
+            val dataPayload = buildJsonObject {
+                put("type", "upload_data")
+                put("transfer_id", transferId)
+                put("offset", offset)
+                put("data", Base64.encodeToString(chunk, Base64.NO_WRAP))
+                put("is_last", isLast)
+            }
+            relay.sendMessage(targetDeviceId, dataPayload, kind = "transfer")
+            offset = end.toLong()
+            onProgress?.invoke(offset, totalBytes)
+        }
+
+        val completePayload = buildJsonObject {
+            put("type", "upload_complete")
+            put("request_id", UUID.randomUUID().toString())
+            put("transfer_id", transferId)
+            put("path", destDir)
+        }
+        val completeResp = sendAndWait(completePayload)
+        return parseOperationResponse(completeResp.payload)
     }
 
     override suspend fun pairDevice(request: PairDeviceRequest): PairDeviceResponse {

@@ -3,6 +3,7 @@ package com.storageos.android.transfer
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.storageos.android.network.RelayAgentApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -163,6 +164,80 @@ class UploadManager(private val context: Context) {
                 } else {
                     notifications.cancel(job.id)
                 }
+            }
+            getJob(job.id)
+        }
+    }
+
+    suspend fun relayUpload(
+        relayApi: RelayAgentApi,
+        destinationPath: String,
+        uri: Uri,
+    ): TransferJob {
+        val resolver = context.contentResolver
+        val fileName = getFileName(uri) ?: "upload_${System.currentTimeMillis()}"
+        val fileSize = getFileSize(uri)
+
+        val job = TransferJob(
+            fileName = fileName,
+            sourcePath = uri.toString(),
+            totalBytes = fileSize,
+        )
+        _jobs.value = _jobs.value + job
+
+        return withContext(Dispatchers.IO) {
+            try {
+                updateJob(job.id) { it.copy(status = TransferStatus.Running) }
+
+                val inputStream = resolver.openInputStream(uri)
+                    ?: throw Exception("Cannot read file")
+                val fileBytes = inputStream.use { it.readBytes() }
+                val startTime = System.currentTimeMillis()
+
+                notifications.showUploadProgress(job.id, fileName, 0, "Uploading via relay...")
+
+                val result = relayApi.uploadFile(
+                    destDir = destinationPath,
+                    fileName = fileName,
+                    fileBytes = fileBytes,
+                    onProgress = { sent, total ->
+                        val pct = if (total > 0) (sent * 100 / total).toInt() else 0
+                        val elapsed = (System.currentTimeMillis() - startTime).coerceAtLeast(1)
+                        val speed = (sent * 1000.0 / elapsed).roundToLong()
+                        updateJob(job.id) {
+                            it.copy(
+                                bytesTransferred = sent,
+                                totalBytes = total,
+                                speedBytesPerSec = speed,
+                            )
+                        }
+                        notifications.showUploadProgress(
+                            job.id, fileName, pct,
+                            "${formatSpeed(speed)} — ${pct}%",
+                        )
+                    },
+                )
+
+                if (result.success) {
+                    updateJob(job.id) {
+                        it.copy(
+                            status = TransferStatus.Completed,
+                            bytesTransferred = fileSize,
+                            totalBytes = fileSize,
+                        )
+                    }
+                    notifications.showUploadComplete(job.id, fileName)
+                } else {
+                    updateJob(job.id) {
+                        it.copy(status = TransferStatus.Failed, error = "Upload failed on remote device")
+                    }
+                    notifications.showFailed(job.id, fileName, "Upload failed")
+                }
+            } catch (e: Exception) {
+                updateJob(job.id) {
+                    it.copy(status = TransferStatus.Failed, error = e.message ?: "Relay upload failed")
+                }
+                notifications.showFailed(job.id, fileName, e.message)
             }
             getJob(job.id)
         }

@@ -16,10 +16,17 @@ class StorageServer(
     private val deviceId: String,
     port: Int = DEFAULT_PORT,
     private val identityProvider: (() -> DeviceIdentityInfo)? = null,
+    private val cacheDir: File? = null,
 ) : NanoHTTPD("0.0.0.0", port) {
 
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val startTime = System.currentTimeMillis()
+
+    init {
+        val tmpDir = cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+        if (!tmpDir.exists()) tmpDir.mkdirs()
+        setTempFileManagerFactory { DefaultTempFileManagerWithDir(tmpDir) }
+    }
 
     override fun serve(session: IHTTPSession): Response {
         if (session.method == Method.OPTIONS) {
@@ -46,13 +53,14 @@ class StorageServer(
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON, errorJson("NOT_FOUND", "Unknown endpoint"))
             }.withCors()
         } catch (e: Exception) {
+            android.util.Log.e("StorageServer", "Error handling $uri: ${e.message}", e)
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("INTERNAL", e.message ?: "Unknown error")).withCors()
         }
     }
 
     private fun Response.withCors(): Response {
         addHeader("Access-Control-Allow-Origin", "*")
-        addHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
+        addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         addHeader("Access-Control-Allow-Headers", "Content-Type")
         return this
     }
@@ -279,6 +287,7 @@ class StorageServer(
     }
 
     private fun serveUpload(session: IHTTPSession, destPath: String?): Response {
+        android.util.Log.i("StorageServer", "serveUpload destPath=$destPath")
         if (destPath.isNullOrBlank()) {
             return newFixedLengthResponse(
                 Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path query parameter")
@@ -287,14 +296,23 @@ class StorageServer(
 
         val resolvedDest = resolvePath(destPath)
         val destDir = File(resolvedDest)
+        android.util.Log.i("StorageServer", "resolvedDest=$resolvedDest exists=${destDir.exists()} isDir=${destDir.isDirectory}")
         if (!destDir.exists() || !destDir.isDirectory) {
             return newFixedLengthResponse(
-                Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Destination is not a directory")
+                Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Destination is not a directory: $resolvedDest")
             )
         }
 
         val files = HashMap<String, String>()
-        session.parseBody(files)
+        try {
+            session.parseBody(files)
+        } catch (e: Exception) {
+            android.util.Log.e("StorageServer", "parseBody failed: ${e.message}", e)
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON, errorJson("PARSE_ERROR", "Failed to parse upload body: ${e.message}")
+            )
+        }
+        android.util.Log.i("StorageServer", "parseBody files=$files")
 
         val tmpFilePath = files["file"] ?: return newFixedLengthResponse(
             Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "No file field in upload")
@@ -305,6 +323,7 @@ class StorageServer(
             ?: File(tmpFilePath).name
 
         val destFile = resolveUploadName(destDir, fileName)
+        android.util.Log.i("StorageServer", "Copying $tmpFilePath -> ${destFile.absolutePath}")
         File(tmpFilePath).copyTo(destFile, overwrite = false)
 
         val resp = json.encodeToString(OperationResp(true, destFile.absolutePath))
@@ -468,3 +487,23 @@ private data class ErrorResp(
     val code: String,
     val message: String,
 )
+
+private class DefaultTempFileManagerWithDir(private val tmpDir: File) : fi.iki.elonen.NanoHTTPD.TempFileManager {
+    private val tempFiles = mutableListOf<fi.iki.elonen.NanoHTTPD.TempFile>()
+
+    override fun createTempFile(filename_hint: String?): fi.iki.elonen.NanoHTTPD.TempFile {
+        val tempFile = File.createTempFile("NanoHTTPD-", "", tmpDir)
+        val tf = object : fi.iki.elonen.NanoHTTPD.TempFile {
+            override fun getName(): String = tempFile.absolutePath
+            override fun open(): java.io.OutputStream = FileOutputStream(tempFile)
+            override fun delete() { tempFile.delete() }
+        }
+        tempFiles.add(tf)
+        return tf
+    }
+
+    override fun clear() {
+        tempFiles.forEach { it.delete() }
+        tempFiles.clear()
+    }
+}

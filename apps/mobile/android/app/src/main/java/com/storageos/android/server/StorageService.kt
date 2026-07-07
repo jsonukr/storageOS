@@ -24,7 +24,7 @@ class StorageService : Service() {
 
         val deviceId = DeviceStore(this).getOrCreateDeviceId()
         try {
-            val s = StorageServer(deviceId)
+            val s = StorageServer(deviceId, cacheDir = cacheDir)
             s.start()
             server = s
         } catch (_: Exception) {

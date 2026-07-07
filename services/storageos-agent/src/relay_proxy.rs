@@ -97,26 +97,33 @@ fn check_relay(state: &AppState) -> Result<(), (StatusCode, Json<dto::ErrorDto>)
     Ok(())
 }
 
+fn extract_payload(raw: &serde_json::Value) -> Result<&serde_json::Value, (StatusCode, Json<dto::ErrorDto>)> {
+    raw.get("payload").ok_or_else(|| relay_error("No payload in response"))
+}
+
+fn parse_data_field<T: serde::de::DeserializeOwned>(payload: &serde_json::Value) -> Result<T, (StatusCode, Json<dto::ErrorDto>)> {
+    if let Some(data_str) = payload.get("data").and_then(|d| d.as_str()) {
+        serde_json::from_str(data_str).map_err(|e| relay_error(&format!("Failed to parse data: {e}")))
+    } else {
+        serde_json::from_value(payload.clone()).map_err(|e| relay_error(&format!("Failed to parse payload: {e}")))
+    }
+}
+
 pub async fn relay_roots(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RelayDeviceParams>,
 ) -> Result<Json<Vec<dto::LocalDriveDto>>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(&params.device, Payload::RootsRequest(RootsRequest {}))
+        .request_raw(&params.device, Payload::RootsRequest(RootsRequest {}))
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::RootsResponse(r) => {
-            let drives: Vec<dto::LocalDriveDto> =
-                r.roots.into_iter().map(dto::LocalDriveDto::from).collect();
-            Ok(Json(drives))
-        }
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let drives: Vec<dto::LocalDriveDto> = parse_data_field(payload)?;
+    Ok(Json(drives))
 }
 
 pub async fn relay_directory(
@@ -125,9 +132,9 @@ pub async fn relay_directory(
 ) -> Result<Json<Vec<dto::DirectoryEntryDto>>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::DirectoryRequest(DirectoryRequest {
                 path: params.path,
@@ -136,14 +143,9 @@ pub async fn relay_directory(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::DirectoryResponse(r) => {
-            let entries: Vec<dto::DirectoryEntryDto> =
-                r.entries.into_iter().map(dto::DirectoryEntryDto::from).collect();
-            Ok(Json(entries))
-        }
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let entries: Vec<dto::DirectoryEntryDto> = parse_data_field(payload)?;
+    Ok(Json(entries))
 }
 
 pub async fn relay_mkdir(
@@ -153,9 +155,9 @@ pub async fn relay_mkdir(
 ) -> Result<Json<OpResponse>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::CreateFolderRequest(CreateFolderRequest {
                 parent: body.parent,
@@ -165,13 +167,10 @@ pub async fn relay_mkdir(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::OperationResponse(r) => Ok(Json(OpResponse {
-            success: r.success,
-            path: r.path,
-        })),
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let success = payload.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+    let path = payload.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+    Ok(Json(OpResponse { success, path }))
 }
 
 pub async fn relay_rename(
@@ -181,9 +180,9 @@ pub async fn relay_rename(
 ) -> Result<Json<OpResponse>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::RenameRequest(RenameEntryRequest {
                 path: body.path,
@@ -193,13 +192,10 @@ pub async fn relay_rename(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::OperationResponse(r) => Ok(Json(OpResponse {
-            success: r.success,
-            path: r.path,
-        })),
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let success = payload.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+    let path = payload.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+    Ok(Json(OpResponse { success, path }))
 }
 
 pub async fn relay_delete(
@@ -208,9 +204,9 @@ pub async fn relay_delete(
 ) -> Result<Json<OpResponse>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::DeleteRequest(DeleteEntryRequest {
                 path: params.path,
@@ -219,13 +215,10 @@ pub async fn relay_delete(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::OperationResponse(r) => Ok(Json(OpResponse {
-            success: r.success,
-            path: r.path,
-        })),
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let success = payload.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+    let path = payload.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+    Ok(Json(OpResponse { success, path }))
 }
 
 pub async fn relay_search(
@@ -234,9 +227,9 @@ pub async fn relay_search(
 ) -> Result<Json<Vec<dto::DirectoryEntryDto>>, (StatusCode, Json<dto::ErrorDto>)> {
     check_relay(&state)?;
 
-    let response = state
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::SearchRequest(SearchEntryRequest {
                 path: params.path,
@@ -247,14 +240,9 @@ pub async fn relay_search(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::SearchResponse(r) => {
-            let entries: Vec<dto::DirectoryEntryDto> =
-                r.entries.into_iter().map(dto::DirectoryEntryDto::from).collect();
-            Ok(Json(entries))
-        }
-        _ => Err(relay_error("Unexpected response type")),
-    }
+    let payload = extract_payload(&raw)?;
+    let entries: Vec<dto::DirectoryEntryDto> = parse_data_field(payload)?;
+    Ok(Json(entries))
 }
 
 pub async fn relay_thumbnail(
@@ -265,13 +253,10 @@ pub async fn relay_thumbnail(
 
     let response = state
         .relay_handle
-        .request(
-            &params.device,
-            Payload::ThumbnailRequest(ThumbnailRequest {
-                path: params.path,
-                max_size: params.max_size,
-            }),
-        )
+        .request(&params.device, Payload::ThumbnailRequest(ThumbnailRequest {
+            path: params.path,
+            max_size: params.max_size,
+        }))
         .await
         .map_err(|e| relay_error(&e))?;
 
@@ -321,10 +306,6 @@ pub async fn relay_download(
                 .decode(&data.data)
                 .map_err(|e| relay_error(&format!("Base64 decode error: {e}")))?;
 
-            let content_type = mime_guess::from_path(&transfer_id)
-                .first_or_octet_stream()
-                .to_string();
-
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -372,9 +353,9 @@ pub async fn relay_upload(
         let total_bytes = file_bytes.len() as u64;
         let transfer_id = uuid::Uuid::new_v4().to_string();
 
-        let response = state
+        let raw = state
             .relay_handle
-            .request(
+            .request_raw(
                 &params.device,
                 Payload::UploadStart(UploadStart {
                     transfer_id: transfer_id.clone(),
@@ -386,7 +367,9 @@ pub async fn relay_upload(
             .await
             .map_err(|e| relay_error(&e))?;
 
-        if !matches!(response.payload, Payload::UploadReady(_)) {
+        let payload = extract_payload(&raw)?;
+        let ptype = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if ptype != "upload_ready" {
             return Err(relay_error("Remote device not ready for upload"));
         }
 
@@ -428,9 +411,9 @@ pub async fn relay_upload(
             offset += chunk.len() as u64;
         }
 
-        let complete_response = state
+        let complete_raw = state
             .relay_handle
-            .request(
+            .request_raw(
                 &params.device,
                 Payload::UploadComplete(UploadComplete {
                     transfer_id,
@@ -440,11 +423,12 @@ pub async fn relay_upload(
             .await
             .map_err(|e| relay_error(&e))?;
 
-        match complete_response.payload {
-            Payload::OperationResponse(r) => {
-                last_path = r.path;
-            }
-            _ => return Err(relay_error("Upload completion failed")),
+        let complete_payload = extract_payload(&complete_raw)?;
+        let success = complete_payload.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+        last_path = complete_payload.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+
+        if !success {
+            return Err(relay_error("Upload completion failed"));
         }
     }
 

@@ -249,6 +249,23 @@ async fn handle_incoming_text(
         }
     }
 
+    // Pre-parse as raw JSON to resolve pending responses (handles Android's format too)
+    if let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) {
+        let kind_str = raw.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        let req_id = raw.get("request_id").and_then(|r| r.as_str());
+
+        if let Some(req_id) = req_id {
+            if kind_str == "response" || kind_str == "error" {
+                let mut pending_guard = pending.lock().await;
+                if let Some(tx) = pending_guard.remove(req_id) {
+                    tracing::debug!(request_id = %req_id, "Relay response resolved");
+                    let _ = tx.send(raw);
+                    return;
+                }
+            }
+        }
+    }
+
     let msg: Message = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
@@ -262,16 +279,6 @@ async fn handle_incoming_text(
         kind = ?msg.kind,
         "Relay message parsed"
     );
-
-    if msg.request_id.is_some() && matches!(msg.kind, MessageKind::Response | MessageKind::Error) {
-        if let Some(ref req_id) = msg.request_id {
-            let mut pending_guard = pending.lock().await;
-            if let Some(tx) = pending_guard.remove(&req_id.0) {
-                let _ = tx.send(msg);
-                return;
-            }
-        }
-    }
 
     if matches!(msg.kind, MessageKind::Request) {
         let response = crate::dispatcher::dispatch(&msg).await;

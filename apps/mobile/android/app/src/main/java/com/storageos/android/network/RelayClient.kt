@@ -39,6 +39,7 @@ data class ProtocolVersion(
 data class RelayMessage(
     val version: ProtocolVersion = ProtocolVersion(),
     val id: String = java.util.UUID.randomUUID().toString(),
+    @SerialName("request_id") val requestId: String? = null,
     val timestamp: Long = System.currentTimeMillis() / 1000,
     val source: String,
     val destination: String,
@@ -119,14 +120,16 @@ class RelayClient(
         _connected.value = false
     }
 
-    fun sendMessage(destination: String, payload: JsonObject) {
+    fun sendMessage(destination: String, payload: JsonObject, kind: String = "request", requestId: String? = null, messageId: String? = null) {
         val msg = json.encodeToString(RelayMessage(
+            id = messageId ?: java.util.UUID.randomUUID().toString(),
             source = identity.deviceId,
             destination = destination,
-            kind = "request",
+            kind = kind,
+            requestId = requestId,
             payload = payload,
         ))
-        Log.d(TAG, "sendMessage dest=$destination msg=${msg.take(200)}")
+        Log.d(TAG, "sendMessage dest=$destination kind=$kind msg=${msg.take(200)}")
         ws?.send(msg)
     }
 
@@ -174,7 +177,7 @@ class RelayClient(
                     val msg = json.decodeFromString<RelayMessage>(text)
                     val payloadType = msg.payload["type"]?.jsonPrimitive?.content ?: ""
 
-                    if (payloadType.endsWith("_request")) {
+                    if (payloadType.endsWith("_request") || payloadType.startsWith("upload_")) {
                         browseHandler?.handleMessage(msg)
                     }
 

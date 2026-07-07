@@ -4,10 +4,10 @@
 //! TypeScript frontend expects (`LocalDriveInfo` and `DirectoryEntry`).
 //! This means the UI can consume Agent responses without any changes.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use storageos_core::models::{Entry, EntryKind, Root};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LocalDriveDto {
     pub letter: String,
     pub label: String,
@@ -62,7 +62,7 @@ impl From<Root> for LocalDriveDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DirectoryEntryDto {
     pub name: String,
     pub full_path: String,
@@ -91,7 +91,7 @@ impl From<Entry> for DirectoryEntryDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorDto {
     pub code: String,
     pub message: String,

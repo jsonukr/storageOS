@@ -145,11 +145,19 @@ fun BrowserScreen(
         val destPath = state.currentPath ?: return@rememberLauncherForActivityResult
         for (uri in uris) {
             scope.launch {
-                val result = uploadManager.upload(
-                    agentBaseUrl = viewModel.agentBaseUrl,
-                    destinationPath = destPath,
-                    uri = uri,
-                )
+                val result = if (api is com.storageos.android.network.RelayAgentApi) {
+                    uploadManager.relayUpload(
+                        relayApi = api,
+                        destinationPath = destPath,
+                        uri = uri,
+                    )
+                } else {
+                    uploadManager.upload(
+                        agentBaseUrl = viewModel.agentBaseUrl,
+                        destinationPath = destPath,
+                        uri = uri,
+                    )
+                }
                 when (result.status) {
                     TransferStatus.Completed -> {
                         snackbar.showSnackbar("${result.fileName} uploaded")
