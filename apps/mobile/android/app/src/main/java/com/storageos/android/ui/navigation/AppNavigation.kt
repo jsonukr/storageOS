@@ -9,10 +9,15 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.storageos.android.api.AgentApi
 import com.storageos.android.transfer.DownloadManager
 import com.storageos.android.transfer.UploadManager
+import com.storageos.android.ui.adaptive.AdaptiveScaffold
+import com.storageos.android.ui.adaptive.LocalWindowSizeClass
+import com.storageos.android.ui.adaptive.NavDestination
+import com.storageos.android.ui.adaptive.showNavigationRail
 import com.storageos.android.ui.browser.BrowserScreen
 import com.storageos.android.ui.browser.BrowserViewModel
 import com.storageos.android.ui.connect.ConnectScreen
@@ -32,89 +37,139 @@ fun AppNavigation() {
     val downloadManager = remember { DownloadManager(context) }
     val uploadManager = remember { UploadManager(context) }
 
-    NavHost(navController = navController, startDestination = "connect") {
-        composable("connect") {
-            val connectViewModel: ConnectViewModel = viewModel()
-            ConnectScreen(
-                onConnected = { api ->
-                    connectedApi = api
-                    val s = connectViewModel.state.value
-                    agentBaseUrl = if (s.host.isNotBlank()) "http://${s.host}:${s.port}" else ""
-                    navController.navigate("browser") {
-                        popUpTo("connect") { inclusive = true }
-                    }
-                },
-                onSharePairing = { navController.navigate("pair") },
-                viewModel = connectViewModel,
-            )
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route ?: "connect"
+    val isConnected = connectedApi != null
+    val windowSizeClass = LocalWindowSizeClass.current
+    val showRail = windowSizeClass.showNavigationRail() && isConnected
+        && currentRoute in listOf("browser", "devices", "transfers", "settings")
+
+    val navigateToDestination: (NavDestination) -> Unit = { dest ->
+        if (currentRoute != dest.route) {
+            navController.navigate(dest.route) {
+                popUpTo("browser") { inclusive = false }
+                launchSingleTop = true
+            }
         }
+    }
 
-        composable("browser") {
-            val api = connectedApi
-            if (api != null) {
-                BackHandler {
-                    if (!browserViewModel.goBack()) {
-                        connectedApi = null
-                        navController.navigate("connect") {
-                            popUpTo("browser") { inclusive = true }
+    val content: @Composable () -> Unit = {
+        NavHost(navController = navController, startDestination = "connect") {
+            composable("connect") {
+                val connectViewModel: ConnectViewModel = viewModel()
+                ConnectScreen(
+                    onConnected = { api ->
+                        connectedApi = api
+                        val s = connectViewModel.state.value
+                        agentBaseUrl = if (s.host.isNotBlank()) "http://${s.host}:${s.port}" else ""
+                        navController.navigate("browser") {
+                            popUpTo("connect") { inclusive = true }
+                        }
+                    },
+                    onSharePairing = { navController.navigate("pair") },
+                    viewModel = connectViewModel,
+                )
+            }
+
+            composable("browser") {
+                val api = connectedApi
+                if (api != null) {
+                    BackHandler {
+                        if (!browserViewModel.goBack()) {
+                            connectedApi = null
+                            navController.navigate("connect") {
+                                popUpTo("browser") { inclusive = true }
+                            }
                         }
                     }
-                }
 
-                BrowserScreen(
-                    api = api,
-                    agentBaseUrl = agentBaseUrl,
-                    onDisconnect = {
-                        connectedApi = null
-                        navController.navigate("connect") {
-                            popUpTo("browser") { inclusive = true }
-                        }
-                    },
-                    onOpenSettings = {
-                        navController.navigate("settings")
-                    },
-                    onOpenDevices = {
-                        navController.navigate("devices")
-                    },
-                    onOpenTransfers = {
-                        navController.navigate("transfers")
-                    },
+                    BrowserScreen(
+                        api = api,
+                        agentBaseUrl = agentBaseUrl,
+                        onDisconnect = {
+                            connectedApi = null
+                            navController.navigate("connect") {
+                                popUpTo("browser") { inclusive = true }
+                            }
+                        },
+                        onOpenSettings = {
+                            navController.navigate("settings")
+                        },
+                        onOpenDevices = {
+                            navController.navigate("devices")
+                        },
+                        onOpenTransfers = {
+                            navController.navigate("transfers")
+                        },
+                        showNavigationActions = !showRail,
+                        downloadManager = downloadManager,
+                        uploadManager = uploadManager,
+                        viewModel = browserViewModel,
+                    )
+                }
+            }
+
+            composable("devices") {
+                val api = connectedApi
+                if (api != null) {
+                    DevicesScreen(
+                        api = api,
+                        onBack = {
+                            if (showRail) navController.navigate("browser") {
+                                popUpTo("browser") { inclusive = true }
+                                launchSingleTop = true
+                            } else navController.popBackStack()
+                        },
+                        onAddDevice = {
+                            connectedApi = null
+                            navController.navigate("connect") {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        },
+                    )
+                }
+            }
+
+            composable("transfers") {
+                TransfersScreen(
                     downloadManager = downloadManager,
                     uploadManager = uploadManager,
-                    viewModel = browserViewModel,
+                    onBack = {
+                        if (showRail) navController.navigate("browser") {
+                            popUpTo("browser") { inclusive = true }
+                            launchSingleTop = true
+                        } else navController.popBackStack()
+                    },
                 )
             }
-        }
 
-        composable("devices") {
-            val api = connectedApi
-            if (api != null) {
-                DevicesScreen(
-                    api = api,
+            composable("pair") {
+                PairScreen(
                     onBack = { navController.popBackStack() },
+                    onPaired = { navController.popBackStack() },
+                )
+            }
+
+            composable("settings") {
+                SettingsScreen(
+                    onBack = {
+                        if (showRail) navController.navigate("browser") {
+                            popUpTo("browser") { inclusive = true }
+                            launchSingleTop = true
+                        } else navController.popBackStack()
+                    },
                 )
             }
         }
+    }
 
-        composable("transfers") {
-            TransfersScreen(
-                downloadManager = downloadManager,
-                uploadManager = uploadManager,
-                onBack = { navController.popBackStack() },
-            )
-        }
-
-        composable("pair") {
-            PairScreen(
-                onBack = { navController.popBackStack() },
-                onPaired = { navController.popBackStack() },
-            )
-        }
-
-        composable("settings") {
-            SettingsScreen(
-                onBack = { navController.popBackStack() },
-            )
-        }
+    if (showRail) {
+        AdaptiveScaffold(
+            currentRoute = currentRoute,
+            onNavigate = navigateToDestination,
+            content = content,
+        )
+    } else {
+        content()
     }
 }

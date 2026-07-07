@@ -9,13 +9,18 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.content.ContextCompat
 import com.storageos.android.server.StorageService
+import com.storageos.android.ui.adaptive.LocalWindowSizeClass
 import com.storageos.android.ui.navigation.AppNavigation
 import com.storageos.android.ui.theme.StorageOSTheme
 
 class MainActivity : ComponentActivity() {
 
+    @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -24,8 +29,11 @@ class MainActivity : ComponentActivity() {
         startStorageService()
 
         setContent {
-            StorageOSTheme {
-                AppNavigation()
+            val windowSizeClass = calculateWindowSizeClass(this)
+            CompositionLocalProvider(LocalWindowSizeClass provides windowSizeClass) {
+                StorageOSTheme {
+                    AppNavigation()
+                }
             }
         }
     }

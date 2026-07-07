@@ -87,6 +87,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
     private val deviceStore = DeviceStore(application)
     private var api: AgentApi? = null
+    private var activeRelay: RelayClient? = null
     private val json = Json { ignoreUnknownKeys = true }
     private val myDeviceId = deviceStore.getOrCreateDeviceId()
 
@@ -166,9 +167,13 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         targetName: String,
         onConnected: (AgentApi) -> Unit,
     ) {
+        activeRelay?.disconnect()
+        activeRelay = null
+
         val context = getApplication<Application>()
         val identity = DeviceIdentity(context)
         val relay = RelayClient(identity, DEFAULT_RELAY_URL)
+        activeRelay = relay
         relay.enableBrowseHandler()
         relay.connect()
 
@@ -391,7 +396,47 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             port = device.port.toString(),
             error = null,
         )
-        connectTo(device.host, device.port, device.name, null, device.deviceId, onConnected)
+
+        if (device.host.isBlank() || device.port <= 0) {
+            viewModelScope.launch {
+                _state.value = _state.value.copy(isConnecting = true, error = null)
+                try {
+                    connectViaRelay(device.deviceId, device.name, onConnected)
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(
+                        isConnecting = false,
+                        error = "Could not reconnect via relay: ${e.message}",
+                    )
+                }
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isConnecting = true, error = null)
+            try {
+                val client = withContext(Dispatchers.IO) {
+                    val c = AgentApi.create(device.host, device.port)
+                    c.health()
+                    c
+                }
+                api = client
+                _state.value = _state.value.copy(isConnecting = false)
+                deviceStore.save(device)
+                _state.value = _state.value.copy(savedDevices = deviceStore.loadAll())
+                onConnected(client)
+            } catch (e: Exception) {
+                Log.i(TAG, "LAN reconnect failed for ${device.name}, trying relay: ${e.message}")
+                try {
+                    connectViaRelay(device.deviceId, device.name, onConnected)
+                } catch (e2: Exception) {
+                    _state.value = _state.value.copy(
+                        isConnecting = false,
+                        error = friendlyError(e),
+                    )
+                }
+            }
+        }
     }
 
     fun connect(onConnected: (AgentApi) -> Unit) {

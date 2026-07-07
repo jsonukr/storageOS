@@ -19,10 +19,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +53,8 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.storageos.android.api.AgentApi
 import com.storageos.android.data.SavedDevice
+import com.storageos.android.ui.adaptive.LocalWindowSizeClass
+import com.storageos.android.ui.adaptive.isCompactWidth
 
 @Composable
 fun ConnectScreen(
@@ -97,62 +101,53 @@ fun ConnectScreen(
         }
     }
 
+    val windowSizeClass = LocalWindowSizeClass.current
+    val isCompact = windowSizeClass.isCompactWidth()
+    val contentMaxWidth = if (isCompact) Modifier.fillMaxWidth() else Modifier.width(420.dp)
+
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 24.dp),
+                .then(if (isCompact) Modifier.padding(horizontal = 24.dp) else Modifier),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             item {
-                Spacer(Modifier.height(48.dp))
+                Column(modifier = contentMaxWidth) {
+                    Spacer(Modifier.height(48.dp))
 
-                Icon(
-                    imageVector = Icons.Default.Dns,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(64.dp)
-                        .fillMaxWidth(),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                Text(
-                    text = "StorageOS",
-                    style = MaterialTheme.typography.headlineLarge,
-                )
-
-                Text(
-                    text = "Connect to your desktop",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                FilledTonalButton(
-                    onClick = { launchScanner() },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    enabled = !state.isConnecting,
-                ) {
                     Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
+                        imageVector = Icons.Default.Dns,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier
+                            .size(64.dp)
+                            .align(Alignment.CenterHorizontally),
+                        tint = MaterialTheme.colorScheme.primary,
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Scan QR Code")
-                }
 
-                if (onSharePairing != null) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(16.dp))
 
-                    OutlinedButton(
-                        onClick = onSharePairing,
+                    Text(
+                        text = "StorageOS",
+                        style = MaterialTheme.typography.headlineLarge,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+
+                    Text(
+                        text = "Connect to your desktop",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+
+                    Spacer(Modifier.height(24.dp))
+
+                    FilledTonalButton(
+                        onClick = { launchScanner() },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
+                        enabled = !state.isConnecting,
                     ) {
                         Icon(
                             imageVector = Icons.Default.QrCodeScanner,
@@ -160,172 +155,193 @@ fun ConnectScreen(
                             modifier = Modifier.size(20.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Share Pairing Info")
+                        Text("Scan QR Code")
                     }
-                }
 
-                Spacer(Modifier.height(24.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
+                    if (onSharePairing != null) {
+                        Spacer(Modifier.height(12.dp))
 
-                Text(
-                    text = "Enter Pairing Code",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = state.pairingCode,
-                    onValueChange = viewModel::onPairingCodeChanged,
-                    label = { Text("Pairing Code") },
-                    placeholder = { Text("XXXX-XXXX-XXXX") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { viewModel.submitPairingCode(onConnected) },
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.isConnecting,
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Button(
-                    onClick = { viewModel.submitPairingCode(onConnected) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    enabled = !state.isConnecting && state.pairingCode.replace("-", "").length >= 8,
-                ) {
-                    if (state.isConnecting) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
+                        OutlinedButton(
+                            onClick = onSharePairing,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = null,
                                 modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp,
                             )
-                            Spacer(Modifier.width(12.dp))
-                            Text("Connecting…")
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share Pairing Info")
                         }
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Link,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Connect with Code")
                     }
-                }
 
-                if (state.savedDevices.isNotEmpty()) {
                     Spacer(Modifier.height(24.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(16.dp))
 
                     Text(
-                        text = "Saved Devices",
+                        text = "Enter Pairing Code",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth(),
                     )
 
                     Spacer(Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = state.pairingCode,
+                        onValueChange = viewModel::onPairingCodeChanged,
+                        label = { Text("Pairing Code") },
+                        placeholder = { Text("XXXX-XXXX-XXXX") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = { viewModel.submitPairingCode(onConnected) },
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.isConnecting,
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    Button(
+                        onClick = { viewModel.submitPairingCode(onConnected) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        enabled = !state.isConnecting && state.pairingCode.replace("-", "").length >= 8,
+                    ) {
+                        if (state.isConnecting) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text("Connecting…")
+                            }
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Connect with Code")
+                        }
+                    }
+
+                    if (state.savedDevices.isNotEmpty()) {
+                        Spacer(Modifier.height(24.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(16.dp))
+
+                        Text(
+                            text = "Saved Devices",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
             }
 
             items(state.savedDevices) { device ->
-                SavedDeviceCard(
-                    device = device,
-                    isConnecting = state.isConnecting,
-                    onClick = { viewModel.connectToSaved(device, onConnected) },
-                )
-                Spacer(Modifier.height(8.dp))
+                Column(modifier = contentMaxWidth) {
+                    SavedDeviceCard(
+                        device = device,
+                        isConnecting = state.isConnecting,
+                        onClick = { viewModel.connectToSaved(device, onConnected) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
 
             item {
-                if (state.savedDevices.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = "Manual Connection",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                OutlinedTextField(
-                    value = state.host,
-                    onValueChange = viewModel::onHostChanged,
-                    label = { Text("IP Address") },
-                    placeholder = { Text("192.168.1.15") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
-                        imeAction = ImeAction.Next,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.isConnecting,
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = state.port,
-                    onValueChange = viewModel::onPortChanged,
-                    label = { Text("Port") },
-                    placeholder = { Text("19742") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { viewModel.connect(onConnected) },
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.isConnecting,
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Button(
-                    onClick = { viewModel.connect(onConnected) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    enabled = !state.isConnecting,
-                ) {
-                    if (state.isConnecting) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text("Connecting…")
-                        }
-                    } else {
-                        Text("Connect")
+                Column(modifier = contentMaxWidth) {
+                    if (state.savedDevices.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "Manual Connection",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
                     }
-                }
 
-                if (state.error != null) {
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = state.error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
+                    OutlinedTextField(
+                        value = state.host,
+                        onValueChange = viewModel::onHostChanged,
+                        label = { Text("IP Address") },
+                        placeholder = { Text("192.168.1.15") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Next,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.isConnecting,
                     )
-                }
 
-                Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = state.port,
+                        onValueChange = viewModel::onPortChanged,
+                        label = { Text("Port") },
+                        placeholder = { Text("19742") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = { viewModel.connect(onConnected) },
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.isConnecting,
+                    )
+
+                    Spacer(Modifier.height(24.dp))
+
+                    Button(
+                        onClick = { viewModel.connect(onConnected) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        enabled = !state.isConnecting,
+                    ) {
+                        if (state.isConnecting) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text("Connecting…")
+                            }
+                        } else {
+                            Text("Connect")
+                        }
+                    }
+
+                    if (state.error != null) {
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = state.error!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+
+                    Spacer(Modifier.height(32.dp))
+                }
             }
         }
     }
@@ -337,6 +353,8 @@ private fun SavedDeviceCard(
     isConnecting: Boolean,
     onClick: () -> Unit,
 ) {
+    val isRelay = device.host.isBlank() || device.port <= 0
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -365,11 +383,20 @@ private fun SavedDeviceCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = "${device.host}:${device.port}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isRelay) Icons.Default.Cloud else Icons.Default.Wifi,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = if (isRelay) "Cloud Relay" else "${device.host}:${device.port}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

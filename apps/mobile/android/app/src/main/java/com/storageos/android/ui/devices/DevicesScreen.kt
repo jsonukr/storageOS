@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -52,6 +53,7 @@ import java.util.Locale
 fun DevicesScreen(
     api: AgentApi,
     onBack: () -> Unit,
+    onAddDevice: (() -> Unit)? = null,
     viewModel: DevicesViewModel = viewModel(),
 ) {
     LaunchedEffect(api) { viewModel.init(api) }
@@ -66,6 +68,13 @@ fun DevicesScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (onAddDevice != null) {
+                        IconButton(onClick = onAddDevice) {
+                            Icon(Icons.Default.AddCircleOutline, contentDescription = "Add Device")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

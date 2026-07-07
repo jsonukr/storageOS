@@ -114,6 +114,8 @@ import com.storageos.android.transfer.DownloadEntry
 import com.storageos.android.transfer.DownloadManager
 import com.storageos.android.transfer.TransferStatus
 import com.storageos.android.transfer.UploadManager
+import com.storageos.android.ui.adaptive.LocalWindowSizeClass
+import com.storageos.android.ui.adaptive.isExpandedWidth
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -127,6 +129,7 @@ fun BrowserScreen(
     onOpenSettings: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
     onOpenTransfers: () -> Unit = {},
+    showNavigationActions: Boolean = true,
     downloadManager: DownloadManager,
     uploadManager: UploadManager,
     viewModel: BrowserViewModel = viewModel(),
@@ -303,14 +306,16 @@ fun BrowserScreen(
                             )
                         }
                     }
-                    IconButton(onClick = onOpenTransfers) {
-                        Icon(Icons.Default.SwapVert, contentDescription = "Transfers")
-                    }
-                    IconButton(onClick = onOpenDevices) {
-                        Icon(Icons.Default.Devices, contentDescription = "Devices")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    if (showNavigationActions) {
+                        IconButton(onClick = onOpenTransfers) {
+                            Icon(Icons.Default.SwapVert, contentDescription = "Transfers")
+                        }
+                        IconButton(onClick = onOpenDevices) {
+                            Icon(Icons.Default.Devices, contentDescription = "Devices")
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -924,8 +929,11 @@ private fun EntryGrid(
         return
     }
 
+    val windowSizeClass = LocalWindowSizeClass.current
+    val gridMinSize = if (windowSizeClass.isExpandedWidth()) 140.dp else 100.dp
+
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 100.dp),
+        columns = GridCells.Adaptive(minSize = gridMinSize),
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
