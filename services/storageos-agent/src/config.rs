@@ -55,9 +55,19 @@ pub struct RelayAgentConfig {
 impl Default for RelayAgentConfig {
     fn default() -> Self {
         Self {
-            url: None,
+            url: Some(storageos_core::config::constants::DEFAULT_RELAY_URL.to_string()),
             heartbeat_interval_secs: default_heartbeat_interval(),
             connection_timeout_secs: default_connection_timeout(),
+        }
+    }
+}
+
+impl RelayAgentConfig {
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(url) = std::env::var("RELAY_URL") {
+            if !url.is_empty() {
+                self.url = Some(url);
+            }
         }
     }
 }

@@ -1080,6 +1080,22 @@ TODOs discovered:
 - **Files modified**: `payloads.rs`, `relay.rs`, `server.rs`, `main.rs`, `Cargo.toml`, `remoteFetch.ts`
 - **Dependencies added**: `base64 0.22`, `tokio-stream 0.1`, `bytes 1` to storageos-agent
 
+### Infrastructure: Public Relay Integration (Render) (2026-07-07) ✅
+
+Centralized relay URL configuration across all platforms. Relay is now enabled by default, pointing at the Render-hosted instance (`wss://storageos.onrender.com/ws`). Fresh installs auto-connect to the public relay without configuration.
+
+- **Centralized constants** (`crates/storageos-core/src/config/constants.rs`): Three relay URL constants as single source of truth
+  - `DEFAULT_RELAY_URL` = `wss://storageos.onrender.com/ws` (Render hosted, default for all platforms)
+  - `DEFAULT_RELAY_URL_LOCAL` = `ws://localhost:19800/ws` (local dev)
+  - `DEFAULT_RELAY_URL_PROD` = `wss://relay.storageos.app/ws` (future production)
+- **Agent TLS** (`services/storageos-agent/Cargo.toml`): Enabled `rustls-tls-webpki-roots` feature on `tokio-tungstenite` for `wss://` WebSocket connections
+- **Agent config cascade** (`services/storageos-agent/src/config.rs`): Default relay URL changed from `None` to `DEFAULT_RELAY_URL`. Added `apply_env_overrides()` for `RELAY_URL` env var. Priority: CLI `--relay-url` > `RELAY_URL` env var > config.toml > default constant
+- **Agent startup** (`services/storageos-agent/src/main.rs`): Removed LAN IP auto-detect hack (`detect_lan_ip()`), replaced with config cascade via `apply_env_overrides()`
+- **Android PairViewModel** (`apps/mobile/android/.../ui/pair/PairViewModel.kt`): Removed `discoverRelayUrl()` gateway-guessing method, replaced with `DEFAULT_RELAY_URL` constant. Fallback chain: DeviceStore saved URL → Render default
+- **Android ConnectViewModel** (`apps/mobile/android/.../ui/connect/ConnectViewModel.kt`): Removed two hardcoded `ws://$host:19800/ws` derivations. QR scan saves relay from QR payload or defaults to Render. Manual connect saves Render default instead of guessing port
+- **Documentation** (`docs/architecture/Networking.md`): Updated Section 4.6 with config cascade, default URL table, TLS details. Updated Section 6.9 with hosted relay TLS architecture
+- **Zero hardcoded relay URLs remain**: Only `constants.rs` contains relay URLs; all other code references the constants or saves from QR/config
+
 ## Last Updated
 
-Product Milestone 5 — PM5: Cross-Network File Transport (2026-07-06)
+Infrastructure: Public Relay Integration (Render) (2026-07-07)

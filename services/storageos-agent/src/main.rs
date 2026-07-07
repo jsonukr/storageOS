@@ -112,13 +112,12 @@ async fn main() {
 
     tracing::info!("Local Storage Provider registered");
 
-    if cfg.relay.url.is_none() {
-        let ip = server::detect_lan_ip();
-        if ip != "127.0.0.1" {
-            let url = format!("ws://{}:{}/ws", ip, storageos_core::config::constants::DEFAULT_RELAY_PORT);
-            tracing::info!(relay_url = %url, "Auto-detected relay URL from LAN IP");
-            cfg.relay.url = Some(url);
-        }
+    cfg.relay.apply_env_overrides();
+
+    if let Some(ref url) = cfg.relay.url {
+        tracing::info!(relay_url = %url, "Relay URL configured");
+    } else {
+        tracing::info!("Relay disabled (no URL configured)");
     }
 
     presence::spawn_presence_poller(registry.clone());

@@ -20,6 +20,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
+private const val DEFAULT_RELAY_URL = "wss://storageos.onrender.com/ws"
+
 data class ConnectUiState(
     val host: String = "",
     val port: String = "19742",
@@ -159,11 +161,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                         api = client
                         _state.value = _state.value.copy(isConnecting = false)
                         val relayFromQr = v2.relay
-                        if (!relayFromQr.isNullOrBlank()) {
-                            deviceStore.saveRelayUrl(relayFromQr)
-                        } else {
-                            deviceStore.saveRelayUrl("ws://$host:19800/ws")
-                        }
+                        deviceStore.saveRelayUrl(if (!relayFromQr.isNullOrBlank()) relayFromQr else DEFAULT_RELAY_URL)
                         deviceStore.save(com.storageos.android.data.SavedDevice(
                             deviceId = v2.id,
                             host = host,
@@ -300,7 +298,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     agentVersion = health.version,
                     agentPlatform = health.platform,
                 )
-                deviceStore.saveRelayUrl("ws://$host:19800/ws")
+                deviceStore.saveRelayUrl(DEFAULT_RELAY_URL)
 
                 val actualDeviceId = remoteDeviceId?.takeIf { it.isNotEmpty() } ?: health.deviceId
 

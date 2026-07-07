@@ -16,6 +16,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
+private const val DEFAULT_RELAY_URL = "wss://storageos.onrender.com/ws"
+
 enum class PairView { LOADING, PAIRING, APPROVAL, DONE }
 
 data class PairUiState(
@@ -52,7 +54,7 @@ class PairViewModel : ViewModel() {
         identity = id
 
         val deviceStore = com.storageos.android.data.DeviceStore(context)
-        relayUrl = deviceStore.getRelayUrl() ?: discoverRelayUrl()
+        relayUrl = deviceStore.getRelayUrl() ?: DEFAULT_RELAY_URL
 
         val url = relayUrl
         if (url != null) {
@@ -62,29 +64,6 @@ class PairViewModel : ViewModel() {
         generateSession()
         startCountdown()
         startMessagePolling()
-    }
-
-    private fun discoverRelayUrl(): String? {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val intf = interfaces.nextElement()
-                if (intf.isLoopback || !intf.isUp) continue
-                val addrs = intf.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        val ip = addr.hostAddress ?: continue
-                        val parts = ip.split(".")
-                        if (parts.size == 4) {
-                            val gateway = "${parts[0]}.${parts[1]}.${parts[2]}.1"
-                            return "ws://$gateway:19800/ws"
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) { }
-        return null
     }
 
     fun cleanup() {

@@ -130,20 +130,37 @@ Uses the Secure Device Identity (UC-004) for authentication — no passwords, no
 
 ### 4.6 Configuration
 
+Config cascade (highest priority wins):
+
+1. CLI: `storageos-agent --relay-url wss://custom.relay.com/ws`
+2. Environment: `RELAY_URL=wss://custom.relay.com/ws`
+3. Config file: `[relay] url = "wss://custom.relay.com/ws"` in config.toml
+4. Default: `wss://storageos.onrender.com/ws` (Render hosted)
+
 TOML config file:
 ```toml
 [relay]
-url = "ws://relay.example.com/ws"
+url = "wss://storageos.onrender.com/ws"
 heartbeat_interval_secs = 30
 connection_timeout_secs = 10
 ```
 
 CLI override:
 ```
-storageos-agent --relay-url ws://relay.example.com/ws
+storageos-agent --relay-url wss://storageos.onrender.com/ws
 ```
 
-Default: no URL = relay disabled.
+Default URLs (centralized in `storageos-core::config::constants`):
+
+| Environment | URL | Constant |
+|-------------|-----|----------|
+| Development (Render) | `wss://storageos.onrender.com/ws` | `DEFAULT_RELAY_URL` |
+| Local dev | `ws://localhost:19800/ws` | `DEFAULT_RELAY_URL_LOCAL` |
+| Production | `wss://relay.storageos.app/ws` | `DEFAULT_RELAY_URL_PROD` |
+
+TLS support: Agent uses `tokio-tungstenite` with `rustls-tls-webpki-roots` feature for `wss://` connections. Android uses OkHttp's built-in TLS.
+
+**Important**: Relay is enabled by default. The agent connects to the Render-hosted relay on startup unless overridden. Set `url = ""` in config.toml or `RELAY_URL=""` to disable.
 
 ### 4.7 State Reporting
 
@@ -355,13 +372,23 @@ Offline = device not in registry (disconnected or never connected).
 - Outbound channel: non-blocking `mpsc::UnboundedSender` for message forwarding
 - Future multi-relay: no shared state between relay instances; client reconnect + device_id routing makes horizontal scaling natural
 
-### 6.9 Future: TLS
+### 6.9 TLS & Hosted Relay
 
-When TLS is added:
-1. Relay accepts `wss://` connections (rustls or native-tls)
-2. Client certificates validated against public keys from HELLO
-3. All forwarded messages encrypted in transit
-4. No changes to routing logic — TLS is transport-level
+The relay server is deployed at `https://storageos.onrender.com` (WebSocket: `wss://storageos.onrender.com/ws`).
+
+Agent TLS support:
+- `tokio-tungstenite` with `rustls-tls-webpki-roots` feature enables `wss://` connections
+- Uses Mozilla's WebPKI root certificates — no custom CA required
+- Both `ws://` (local dev) and `wss://` (hosted) work transparently via `MaybeTlsStream`
+
+Android TLS support:
+- OkHttp handles TLS natively — no additional configuration needed
+- Default relay URL: `wss://storageos.onrender.com/ws`
+
+Future production:
+1. Custom domain relay at `wss://relay.storageos.app/ws`
+2. Client certificate validation against public keys from HELLO
+3. E2E encryption of payloads (X25519 key exchange)
 
 ---
 

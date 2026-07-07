@@ -4,6 +4,42 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Infrastructure — Public Relay Integration (Render)
+
+#### 2026-07-07 — Public Relay Integration
+
+- **Centralized relay URL constants** (`crates/storageos-core/src/config/constants.rs`): Single source of truth for all relay URLs
+  - `DEFAULT_RELAY_URL` = `wss://storageos.onrender.com/ws` (Render hosted, default)
+  - `DEFAULT_RELAY_URL_LOCAL` = `ws://localhost:19800/ws` (local development)
+  - `DEFAULT_RELAY_URL_PROD` = `wss://relay.storageos.app/ws` (future production)
+
+- **Agent TLS support** (`services/storageos-agent/Cargo.toml`): Enabled `rustls-tls-webpki-roots` feature on `tokio-tungstenite` for `wss://` WebSocket connections using Mozilla WebPKI root certificates
+
+- **Agent config cascade** (`services/storageos-agent/src/config.rs`):
+  - Default relay URL changed from `None` (disabled) to `DEFAULT_RELAY_URL` (Render, enabled)
+  - Added `apply_env_overrides()` method: reads `RELAY_URL` environment variable
+  - Priority order: CLI `--relay-url` > `RELAY_URL` env var > config.toml `[relay] url` > default constant
+
+- **Agent startup cleanup** (`services/storageos-agent/src/main.rs`):
+  - Removed LAN IP auto-detect hack (`detect_lan_ip()` function and `ws://<gateway>:19800/ws` derivation)
+  - Replaced with `cfg.relay.apply_env_overrides()` for clean config cascade
+
+- **Android PairViewModel** (`apps/mobile/android/.../ui/pair/PairViewModel.kt`):
+  - Removed `discoverRelayUrl()` — no longer guesses gateway IP + port 19800
+  - Added `DEFAULT_RELAY_URL` constant (`wss://storageos.onrender.com/ws`)
+  - Fallback: DeviceStore saved URL → Render default (always has a relay URL)
+
+- **Android ConnectViewModel** (`apps/mobile/android/.../ui/connect/ConnectViewModel.kt`):
+  - Removed hardcoded `deviceStore.saveRelayUrl("ws://$host:19800/ws")` (2 occurrences)
+  - QR scan: saves relay URL from QR payload `relay` field, falls back to `DEFAULT_RELAY_URL`
+  - Manual connect: saves `DEFAULT_RELAY_URL` instead of deriving from host IP
+
+- **Documentation** (`docs/architecture/Networking.md`):
+  - Section 4.6: rewritten with config cascade, default URL table, TLS details, disable instructions
+  - Section 6.9: rewritten for hosted relay TLS architecture (rustls + OkHttp), future production plans
+
+- **Build verification**: `cargo check` agent (clean), `tsc --noEmit` desktop (clean), `gradlew assembleDebug` Android (BUILD SUCCESSFUL)
+
 ### Product Milestone 5 — Cross-Network File Transport
 
 #### 2026-07-06 — PM5: Cross-Network File Transport (All 8 Phases)
