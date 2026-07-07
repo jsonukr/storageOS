@@ -39,8 +39,8 @@ pub const DEFAULT_RELAY_URL_LOCAL: &str = "ws://localhost:19800/ws";
 /// Default Relay URL for production (placeholder).
 pub const DEFAULT_RELAY_URL_PROD: &str = "wss://relay.storageos.app/ws";
 
-/// Relay: heartbeat interval (30 seconds).
-pub const RELAY_HEARTBEAT_INTERVAL_SECS: u64 = 30;
+/// Relay: heartbeat interval (10 seconds — Render free tier drops idle WebSockets after ~15s).
+pub const RELAY_HEARTBEAT_INTERVAL_SECS: u64 = 10;
 
 /// Relay: connection timeout (90 seconds — Render free tier cold starts take 30-60s).
 pub const RELAY_CONNECTION_TIMEOUT_SECS: u64 = 90;

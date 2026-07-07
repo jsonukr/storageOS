@@ -63,7 +63,7 @@ class RelayClient(
     private val client = OkHttpClient.Builder()
         .connectTimeout(90, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MINUTES)
-        .pingInterval(30, TimeUnit.SECONDS)
+        .pingInterval(10, TimeUnit.SECONDS)
         .build()
 
     private var ws: WebSocket? = null
