@@ -27,11 +27,23 @@ pub fn router(state: Arc<RelayState>) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/version", get(version))
         .route("/devices", get(list_devices))
         .route("/pair/lookup", post(pair_code_lookup))
         .route("/ws", get(ws_upgrade))
         .layer(cors)
         .with_state(state)
+}
+
+/// Update manifest served to clients, embedded at compile time.
+/// To publish an update: bump `version.json` and redeploy the relay.
+const VERSION_MANIFEST: &str = include_str!("../version.json");
+
+/// `GET /version` — returns the app update manifest (latest versions +
+/// download URL). Clients compare it to their own version and, if newer,
+/// prompt the user to download the latest build from the website.
+async fn version() -> impl IntoResponse {
+    ([("content-type", "application/json")], VERSION_MANIFEST)
 }
 
 #[derive(Serialize)]

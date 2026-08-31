@@ -24,6 +24,7 @@ import com.storageos.android.ui.devices.DevicesScreen
 import com.storageos.android.ui.pair.PairScreen
 import com.storageos.android.ui.settings.SettingsScreen
 import com.storageos.android.ui.transfers.TransfersScreen
+import com.storageos.android.update.UpdateGate
 
 @Composable
 fun AppNavigation() {
@@ -167,4 +168,8 @@ fun AppNavigation() {
     } else {
         content()
     }
+
+    // Overlays an "update available" dialog on top of any screen if the relay's
+    // /version manifest reports a newer build than this one.
+    UpdateGate()
 }

@@ -34,6 +34,11 @@ export function platform(): Promise<PlatformResponse> {
   return invoke<PlatformResponse>("platform");
 }
 
+/** Open an http(s) URL in the user's default browser. */
+export function openUrl(url: string): Promise<void> {
+  return invoke<void>("open_url", { url });
+}
+
 /** Get application-specific directories (data, config, cache, log). */
 export function appDirectories(): Promise<AppDirectoriesResponse> {
   return invoke<AppDirectoriesResponse>("app_directories");

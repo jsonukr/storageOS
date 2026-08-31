@@ -17,3 +17,4 @@ pub mod transfer;
 pub mod pick_files;
 pub mod remote_transfer;
 pub mod thumbnail;
+pub mod open_url;

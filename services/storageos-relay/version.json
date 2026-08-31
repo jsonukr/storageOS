@@ -1,0 +1,12 @@
+{
+  "windows": {
+    "version": "0.1.0",
+    "notes": "Initial preview release."
+  },
+  "android": {
+    "version": "0.1.0",
+    "versionCode": 1,
+    "notes": "Initial preview release."
+  },
+  "downloadUrl": "https://github.com/jsonukr/storageOS/releases/latest"
+}
