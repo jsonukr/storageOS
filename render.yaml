@@ -7,8 +7,11 @@
 # NOTE: the relay reads --port from the CLI (NOT the $PORT env var), so the
 # startCommand must pass --port $PORT or Render will kill it for not binding.
 services:
+  # Service name = onrender.com subdomain. Named "storageos" so it maps to
+  # the existing wss://storageos.onrender.com/ws that every shipped app has
+  # hardcoded — keeping the URL means no client rebuild is needed.
   - type: web
-    name: storageos-relay
+    name: storageos
     runtime: rust
     plan: free
     branch: dev
