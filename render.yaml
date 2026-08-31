@@ -1,0 +1,18 @@
+# Render Blueprint for the StorageOS relay.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# To use: Render dashboard → New + → Blueprint → connect jsonukr/storageOS → Apply.
+# Render reads this file and provisions the service below automatically.
+#
+# NOTE: the relay reads --port from the CLI (NOT the $PORT env var), so the
+# startCommand must pass --port $PORT or Render will kill it for not binding.
+services:
+  - type: web
+    name: storageos-relay
+    runtime: rust
+    plan: free
+    branch: dev
+    rootDir: services/storageos-relay
+    buildCommand: cargo build --release
+    startCommand: ./target/release/storageos-relay --port $PORT --bind 0.0.0.0
+    healthCheckPath: /health
