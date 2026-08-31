@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -45,8 +46,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.storageos.android.api.AgentApi
 import com.storageos.android.api.DirectoryEntry
+import com.storageos.android.network.RelayAgentApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.net.URLEncoder
+import java.nio.ByteBuffer
 
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
 
@@ -57,6 +63,7 @@ fun DirectoryEntry.isImage(): Boolean =
 fun ImagePreviewScreen(
     images: List<DirectoryEntry>,
     initialIndex: Int,
+    api: AgentApi,
     agentBaseUrl: String,
     onClose: () -> Unit,
 ) {
@@ -84,14 +91,33 @@ fun ImagePreviewScreen(
             key = { images[it].fullPath },
         ) { page ->
             val entry = images[page]
-            val encodedPath = URLEncoder.encode(entry.fullPath, "UTF-8")
-            val imageUrl = "$agentBaseUrl/download?path=$encodedPath"
 
-            ZoomableImage(
-                imageUrl = imageUrl,
-                contentDescription = entry.name,
-                onTap = { showOverlay = !showOverlay },
-            )
+            if (api is RelayAgentApi) {
+                // No HTTP endpoint over relay — pull the image bytes through the
+                // relay and hand them to Coil as a ByteBuffer.
+                val result by produceState<Result<ByteArray>?>(null, entry.fullPath) {
+                    value = runCatching {
+                        withContext(Dispatchers.IO) { api.downloadBytes(entry.fullPath) }
+                    }
+                }
+                when {
+                    result == null -> PreviewLoading()
+                    result?.isSuccess == true -> ZoomableImage(
+                        model = ByteBuffer.wrap(result!!.getOrThrow()),
+                        contentDescription = entry.name,
+                        onTap = { showOverlay = !showOverlay },
+                    )
+                    else -> PreviewError()
+                }
+            } else {
+                val encodedPath = URLEncoder.encode(entry.fullPath, "UTF-8")
+                val imageUrl = "$agentBaseUrl/download?path=$encodedPath"
+                ZoomableImage(
+                    model = imageUrl,
+                    contentDescription = entry.name,
+                    onTap = { showOverlay = !showOverlay },
+                )
+            }
         }
 
         AnimatedVisibility(
@@ -136,8 +162,37 @@ fun ImagePreviewScreen(
 }
 
 @Composable
+private fun PreviewLoading() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Color.White)
+    }
+}
+
+@Composable
+private fun PreviewError() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Default.BrokenImage,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = Color.White.copy(alpha = 0.5f),
+        )
+        Text(
+            text = "Failed to load image",
+            color = Color.White.copy(alpha = 0.5f),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
 private fun ZoomableImage(
-    imageUrl: String,
+    model: Any?,
     contentDescription: String,
     onTap: () -> Unit,
 ) {
@@ -160,8 +215,8 @@ private fun ZoomableImage(
         offset = newOffset
     }
 
-    LaunchedEffect(imageUrl) {
-        snapshotFlow { imageUrl }.collect {
+    LaunchedEffect(model) {
+        snapshotFlow { model }.collect {
             scale = 1f
             offset = Offset.Zero
         }
@@ -194,7 +249,7 @@ private fun ZoomableImage(
     ) {
         SubcomposeAsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
-                .data(imageUrl)
+                .data(model)
                 .crossfade(true)
                 .build(),
             contentDescription = contentDescription,

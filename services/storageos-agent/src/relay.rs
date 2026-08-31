@@ -33,7 +33,7 @@ pub fn spawn_relay_client(
     ctx: RelayContext,
 ) -> (watch::Receiver<RelayState>, RelayHandle) {
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<String>();
-    let relay_handle = RelayHandle::new(outbound_tx, ctx.device_id.clone());
+    let relay_handle = RelayHandle::new(outbound_tx.clone(), ctx.device_id.clone());
 
     let url = match &ctx.config.url {
         Some(u) if !u.is_empty() => u.clone(),
@@ -48,7 +48,7 @@ pub fn spawn_relay_client(
     let (state_tx, state_rx) = watch::channel(RelayState::Disconnected);
 
     let pending = relay_handle.pending_map();
-    tokio::spawn(relay_loop(url, ctx, state_tx, outbound_rx, pending));
+    tokio::spawn(relay_loop(url, ctx, state_tx, outbound_rx, outbound_tx, pending));
 
     (state_rx, relay_handle)
 }
@@ -58,6 +58,7 @@ async fn relay_loop(
     ctx: RelayContext,
     state_tx: watch::Sender<RelayState>,
     mut outbound_rx: mpsc::UnboundedReceiver<String>,
+    outbound_tx: mpsc::UnboundedSender<String>,
     pending: crate::relay_handle::PendingMap,
 ) {
     let mut backoff_index: usize = 0;
@@ -72,7 +73,7 @@ async fn relay_loop(
                 let _ = state_tx.send(RelayState::Connected);
                 tracing::info!(url = %url, "Relay connected");
 
-                run_session(ws, &ctx, &state_tx, &mut outbound_rx, &pending, &ctx.pair_event_tx).await;
+                run_session(ws, &ctx, &state_tx, &mut outbound_rx, &outbound_tx, &pending, &ctx.pair_event_tx).await;
 
                 let _ = state_tx.send(RelayState::Disconnected);
                 tracing::info!(url = %url, "Relay disconnected");
@@ -129,6 +130,7 @@ async fn run_session(
     ctx: &RelayContext,
     state_tx: &watch::Sender<RelayState>,
     outbound_rx: &mut mpsc::UnboundedReceiver<String>,
+    outbound_tx: &mpsc::UnboundedSender<String>,
     pending: &crate::relay_handle::PendingMap,
     pair_event_tx: &Option<mpsc::UnboundedSender<PairRelayEvent>>,
 ) {
@@ -184,7 +186,7 @@ async fn run_session(
                         }
                     }
                     Some(Ok(tungstenite::Message::Text(text))) => {
-                        handle_incoming_text(&text, &device_id, pending, pair_event_tx, &mut sink).await;
+                        handle_incoming_text(&text, &device_id, outbound_tx, pending, pair_event_tx).await;
                     }
                     Some(Ok(tungstenite::Message::Binary(data))) => {
                         tracing::debug!(len = data.len(), "Relay binary message received");
@@ -215,14 +217,9 @@ async fn run_session(
 async fn handle_incoming_text(
     text: &str,
     device_id: &str,
+    outbound_tx: &mpsc::UnboundedSender<String>,
     pending: &crate::relay_handle::PendingMap,
     pair_event_tx: &Option<mpsc::UnboundedSender<PairRelayEvent>>,
-    sink: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        tungstenite::Message,
-    >,
 ) {
     if let Some(tx) = pair_event_tx {
         if let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) {
@@ -281,17 +278,22 @@ async fn handle_incoming_text(
     );
 
     if matches!(msg.kind, MessageKind::Request) {
-        let response = crate::dispatcher::dispatch(&msg).await;
-        match serde_json::to_string(&response) {
-            Ok(json) => {
-                if let Err(e) = sink.send(tungstenite::Message::Text(json)).await {
-                    tracing::warn!(error = %e, "Failed to send dispatch response");
+        // Handle the request off the session loop so a slow filesystem call
+        // (e.g. listing a large directory) can't stall heartbeats and get the
+        // connection dropped. The response is queued on the outbound channel
+        // and written out by the session loop.
+        let tx = outbound_tx.clone();
+        tokio::spawn(async move {
+            let response = crate::dispatcher::dispatch(&msg).await;
+            match serde_json::to_string(&response) {
+                Ok(json) => {
+                    let _ = tx.send(json);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to serialize dispatch response");
                 }
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to serialize dispatch response");
-            }
-        }
+        });
     }
 }
 

@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.booleanOrNull
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -167,9 +168,9 @@ class RelayAgentApi(
                     ?: root["name"]?.jsonPrimitive?.content ?: "",
                 driveType = custom?.get("windows_drive_type")?.jsonPrimitive?.contentOrNull
                     ?: root["kind"]?.jsonPrimitive?.content ?: "unknown",
-                totalBytes = capacity?.get("total_bytes")?.jsonPrimitive?.long ?: 0L,
-                freeBytes = capacity?.get("free_bytes")?.jsonPrimitive?.long ?: 0L,
-                usedBytes = capacity?.get("used_bytes")?.jsonPrimitive?.long ?: 0L,
+                totalBytes = capacity?.get("total_bytes")?.jsonPrimitive?.longOrNull ?: 0L,
+                freeBytes = capacity?.get("free_bytes")?.jsonPrimitive?.longOrNull ?: 0L,
+                usedBytes = capacity?.get("used_bytes")?.jsonPrimitive?.longOrNull ?: 0L,
                 fileSystem = metadata?.get("file_system")?.jsonPrimitive?.contentOrNull ?: "",
                 isRemovable = metadata?.get("is_removable")?.jsonPrimitive?.booleanOrNull ?: false,
                 isReady = metadata?.get("is_ready")?.jsonPrimitive?.booleanOrNull ?: false,
@@ -187,9 +188,9 @@ class RelayAgentApi(
                 name = entry["name"]?.jsonPrimitive?.content ?: "",
                 fullPath = entry["path"]?.jsonPrimitive?.content ?: "",
                 isDirectory = entry["kind"]?.jsonPrimitive?.content == "folder",
-                size = entry["size"]?.jsonPrimitive?.long ?: 0L,
-                lastModified = entry["modified_at"]?.jsonPrimitive?.long ?: 0L,
-                dateCreated = entry["created_at"]?.jsonPrimitive?.long ?: 0L,
+                size = entry["size"]?.jsonPrimitive?.longOrNull ?: 0L,
+                lastModified = entry["modified_at"]?.jsonPrimitive?.longOrNull ?: 0L,
+                dateCreated = entry["created_at"]?.jsonPrimitive?.longOrNull ?: 0L,
                 hidden = metadata?.get("hidden")?.jsonPrimitive?.booleanOrNull ?: false,
                 readonly = metadata?.get("readonly")?.jsonPrimitive?.booleanOrNull ?: false,
                 extension = metadata?.get("extension")?.jsonPrimitive?.contentOrNull ?: "",
@@ -255,6 +256,25 @@ class RelayAgentApi(
         }
         val completeResp = sendAndWait(completePayload)
         return parseOperationResponse(completeResp.payload)
+    }
+
+    /**
+     * Fetch a file's full bytes over the relay (used for image previews, since
+     * relay connections have no HTTP endpoint to load from). The desktop agent
+     * returns the whole file as a single base64 download_data response.
+     */
+    suspend fun downloadBytes(path: String): ByteArray {
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "download_request")
+            put("request_id", requestId)
+            put("transfer_id", UUID.randomUUID().toString())
+            put("path", path)
+        }
+        val response = sendAndWait(payload)
+        val dataB64 = response.payload["data"]?.jsonPrimitive?.contentOrNull
+            ?: throw RuntimeException("No data in download response")
+        return Base64.decode(dataB64, Base64.DEFAULT)
     }
 
     override suspend fun pairDevice(request: PairDeviceRequest): PairDeviceResponse {

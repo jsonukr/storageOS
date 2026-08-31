@@ -3,6 +3,13 @@ use storageos_core::models::device::DeviceId;
 use storageos_core::networking::{DeviceEndpoint, TransportKind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Semaphore;
+
+/// Cap how many devices we probe at once. Without this, one poll cycle could
+/// spawn one task per paired device, and if several are unreachable the 5s
+/// timeouts pile up and starve the runtime — which made the app hang once
+/// several devices were paired.
+const MAX_CONCURRENT_PROBES: usize = 4;
 
 pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
     tokio::spawn(async move {
@@ -10,6 +17,8 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap_or_default();
+
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PROBES));
 
         loop {
             tokio::time::sleep(Duration::from_secs(12)).await;
@@ -24,6 +33,12 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
                     continue;
                 }
 
+                // Blocks here until a slot frees up, bounding concurrency.
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
                 let registry = registry.clone();
                 let client = client.clone();
                 let device_id = device.device_id.clone();
@@ -32,6 +47,7 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
                 let endpoints = device.endpoints.clone();
 
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()

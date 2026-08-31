@@ -267,12 +267,15 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun probeRelayTarget(relayApi: RelayAgentApi): Boolean {
-        val deadlineMs = System.currentTimeMillis() + 75_000
+        // Keep this short: a long probe makes the phone look "stuck" when the
+        // target is offline. A few quick attempts cover a warm reconnect; past
+        // that we surface a clear error instead of hanging.
+        val deadlineMs = System.currentTimeMillis() + 20_000
         var attempt = 0
         while (System.currentTimeMillis() < deadlineMs) {
             attempt++
             val reached = try {
-                withTimeout(8_000) { relayApi.roots() }
+                withTimeout(6_000) { relayApi.roots() }
                 true
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 false

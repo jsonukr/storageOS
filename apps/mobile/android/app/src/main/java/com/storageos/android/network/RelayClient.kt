@@ -4,6 +4,7 @@ import com.storageos.android.data.DeviceIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +26,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "RelayClient"
@@ -77,6 +79,12 @@ class RelayClient(
     private val relayUrl: String,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Single-threaded so incoming browse/upload requests are handled off the
+    // WebSocket reader thread (heavy file I/O) yet stay strictly in order —
+    // upload chunks must be written sequentially.
+    private val browseDispatcher = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "relay-browse-handler")
+    }.asCoroutineDispatcher()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val client = OkHttpClient.Builder()
         .connectTimeout(90, TimeUnit.SECONDS)
@@ -118,6 +126,7 @@ class RelayClient(
         ws?.close(1000, "Client disconnect")
         ws = null
         _connected.value = false
+        browseDispatcher.close()
     }
 
     fun sendMessage(destination: String, payload: JsonObject, kind: String = "request", requestId: String? = null, messageId: String? = null) {
@@ -178,7 +187,10 @@ class RelayClient(
                     val payloadType = msg.payload["type"]?.jsonPrimitive?.content ?: ""
 
                     if (payloadType.endsWith("_request") || payloadType.startsWith("upload_")) {
-                        browseHandler?.handleMessage(msg)
+                        val handler = browseHandler
+                        if (handler != null) {
+                            scope.launch(browseDispatcher) { handler.handleMessage(msg) }
+                        }
                     }
 
                     responseHandlers.forEach { it(msg) }

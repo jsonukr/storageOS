@@ -211,6 +211,7 @@ fun BrowserScreen(
         ImagePreviewScreen(
             images = state.previewImages,
             initialIndex = state.previewIndex,
+            api = api,
             agentBaseUrl = viewModel.agentBaseUrl,
             onClose = { viewModel.closePreview() },
         )
