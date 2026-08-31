@@ -180,28 +180,28 @@ export default function Devices() {
     return (
       <div className="grid grid-cols-5 gap-3 text-[11px] text-text-tertiary">
         <div>
-          <div className="text-text-secondary font-medium">Transport</div>
+          <div className="text-text-secondary font-medium mb-0.5">Transport</div>
           <div className="flex items-center gap-1">
-            <span className={`inline-block h-1.5 w-1.5 rounded-full ${qualityDotColor(quality)}`} />
+            <span className={`inline-block h-[5px] w-[5px] rounded-full ${qualityDotColor(quality)}`} />
             {TRANSPORT_LABELS[(activeTransport || "lan") as TransportKind] || "LAN"}
           </div>
         </div>
         <div>
-          <div className="text-text-secondary font-medium">Available</div>
+          <div className="text-text-secondary font-medium mb-0.5">Available</div>
           {available.length > 0
             ? available.map((ep) => TRANSPORT_LABELS[ep.transport]).join(", ")
             : `${reachableCount}/${totalCount}`}
         </div>
         <div>
-          <div className="text-text-secondary font-medium">Latency</div>
+          <div className="text-text-secondary font-medium mb-0.5">Latency</div>
           {latencyText}
         </div>
         <div>
-          <div className="text-text-secondary font-medium">Paired</div>
+          <div className="text-text-secondary font-medium mb-0.5">Paired</div>
           {formatDate(device.paired_at)}
         </div>
         <div>
-          <div className="text-text-secondary font-medium">Version</div>
+          <div className="text-text-secondary font-medium mb-0.5">Version</div>
           {device.version || "Unknown"}
         </div>
       </div>
@@ -227,21 +227,21 @@ export default function Devices() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-[720px] mx-auto py-6 px-6 space-y-6">
+      <div className="max-w-[700px] mx-auto py-6 px-6 space-y-5">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-text-primary">Devices</h1>
+          <h1 className="text-[20px] font-semibold text-text-primary leading-[28px]">Devices</h1>
           <div className="flex gap-2">
             <button
               onClick={() => setShowCodeEntry(true)}
               disabled={agentState !== "connected"}
-              className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 rounded-[4px] text-[12px] font-medium border border-border bg-surface-card text-text-primary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-[167ms]"
             >
               Enter Code
             </button>
             <button
               onClick={() => setShowPairDialog(true)}
               disabled={agentState !== "connected"}
-              className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 rounded-[4px] text-[12px] font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-[167ms]"
             >
               Pair Device
             </button>
@@ -249,21 +249,21 @@ export default function Devices() {
         </div>
 
         {/* This PC */}
-        <div className="bg-surface-hover rounded-lg border border-border p-4">
+        <div className="bg-surface-card rounded-[8px] border border-border-card p-4 shadow-[var(--shadow-card)]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+            <div className="w-10 h-10 rounded-[8px] bg-accent/10 flex items-center justify-center text-accent">
               {deviceIcon("desktop")}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-medium text-text-primary">
-                {pairInfo?.name ?? "This PC"} <span className="text-[11px] text-text-tertiary font-normal">(this device)</span>
+              <div className="text-[13px] font-semibold text-text-primary">
+                {pairInfo?.name ?? "This PC"} <span className="text-[11px] text-text-tertiary font-normal ml-1">(this device)</span>
               </div>
-              <div className="text-[11px] text-text-tertiary">
+              <div className="text-[11px] text-text-tertiary mt-0.5">
                 {pairInfo?.hint?.lan ? pairInfo.hint.lan : (pairInfo ? "Agent online" : "Agent offline")}
                 {agentVersion && ` · v${agentVersion}`}
               </div>
             </div>
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${
+            <span className={`inline-block h-2 w-2 rounded-full ${
               agentState === "connected" ? "bg-success" : "bg-text-tertiary"
             }`} />
           </div>
@@ -271,40 +271,40 @@ export default function Devices() {
 
         {/* Paired Devices */}
         {devices.length > 0 && (
-          <div className="space-y-3">
-            <h2 className="text-[12px] font-medium text-text-secondary uppercase tracking-wider">
+          <div className="space-y-2.5">
+            <h2 className="text-[12px] font-semibold text-text-secondary uppercase tracking-wider">
               Paired Devices
             </h2>
             {devices.map((device) => (
-              <div key={device.device_id} className="bg-surface-hover rounded-lg border border-border p-4 space-y-3">
+              <div key={device.device_id} className="bg-surface-card rounded-[8px] border border-border-card p-4 space-y-3 shadow-[var(--shadow-card)]">
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    device.status === "online" ? "bg-green-500/10 text-green-500" : "bg-text-tertiary/10 text-text-tertiary"
+                  <div className={`w-10 h-10 rounded-[8px] flex items-center justify-center ${
+                    device.status === "online" ? "bg-success/10 text-success" : "bg-text-tertiary/10 text-text-tertiary"
                   }`}>
                     {deviceIcon(device.device_type)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-text-primary truncate">
+                    <div className="text-[13px] font-semibold text-text-primary truncate">
                       {device.friendly_name}
                     </div>
-                    <div className="text-[11px] text-text-tertiary">
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
                       {device.platform || device.device_type} · {device.status === "online"
                         ? `${TRANSPORT_LABELS[(device.preferred_transport || "lan") as TransportKind] || "LAN"} · ${device.endpoints?.length || 1} endpoint${(device.endpoints?.length || 1) !== 1 ? "s" : ""}`
                         : `Last seen ${formatLastSeen(device.last_seen)}`}
                     </div>
                   </div>
-                  <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${
+                  <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${
                     device.status === "online" ? "bg-success" : "bg-text-tertiary"
                   }`} />
                 </div>
 
                 <DeviceDetails device={device} />
 
-                <div className="flex gap-2 pt-1 border-t border-border">
+                <div className="flex gap-1.5 pt-2.5 border-t border-border">
                   <button
                     onClick={() => openBrowse(device)}
                     disabled={device.status !== "online"}
-                    className="px-2.5 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="px-2.5 py-1 rounded-[4px] text-[11px] font-medium bg-accent/10 text-accent hover:bg-accent/15 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-[167ms]"
                   >
                     Browse
                   </button>
@@ -313,13 +313,13 @@ export default function Devices() {
                       setRenameTarget(device);
                       setRenameName(device.friendly_name);
                     }}
-                    className="px-2.5 py-1 rounded text-[11px] font-medium text-text-secondary hover:bg-surface-hover transition-colors border border-border"
+                    className="px-2.5 py-1 rounded-[4px] text-[11px] font-medium text-text-secondary hover:bg-surface-hover transition-all duration-[167ms] border border-border"
                   >
                     Rename
                   </button>
                   <button
                     onClick={() => setForgetTarget(device)}
-                    className="px-2.5 py-1 rounded text-[11px] font-medium text-danger hover:bg-danger/10 transition-colors"
+                    className="px-2.5 py-1 rounded-[4px] text-[11px] font-medium text-danger hover:bg-danger/10 transition-all duration-[167ms]"
                   >
                     Forget
                   </button>
@@ -330,13 +330,13 @@ export default function Devices() {
         )}
 
         {devices.length === 0 && (
-          <div className="text-center py-8 text-text-tertiary">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="mx-auto mb-3 opacity-40">
+          <div className="text-center py-10 text-text-tertiary">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="mx-auto mb-3 opacity-30">
               <rect x="14" y="4" width="20" height="40" rx="3" stroke="currentColor" strokeWidth="1.5" />
               <path d="M20 38h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
-            <p className="text-[12px]">No devices paired yet.</p>
-            <p className="text-[11px] mt-1">Click "Pair Device" to connect a device.</p>
+            <p className="text-[13px] font-medium text-text-secondary">No devices paired yet</p>
+            <p className="text-[12px] mt-1 text-text-tertiary">Click "Pair Device" to connect a device.</p>
           </div>
         )}
       </div>
@@ -346,9 +346,9 @@ export default function Devices() {
 
       {/* Rename Dialog */}
       {renameTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRenameTarget(null)}>
-          <div className="bg-surface rounded-lg border border-border p-5 w-[360px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[13px] font-semibold text-text-primary mb-3">Rename Device</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-surface-smoke)]" onClick={() => setRenameTarget(null)}>
+          <div className="bg-surface-dialog rounded-[8px] border border-border shadow-[var(--shadow-dialog)] p-5 w-[360px]" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[14px] font-semibold text-text-primary mb-3">Rename Device</h3>
             <p className="text-[12px] text-text-tertiary mb-3">
               System name: {renameTarget.system_name}
             </p>
@@ -358,13 +358,13 @@ export default function Devices() {
               onChange={(e) => setRenameName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleRename()}
               autoFocus
-              className="w-full h-8 px-2.5 rounded-md border border-border bg-surface text-[12px] text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 mb-4"
+              className="w-full h-8 px-3 rounded-[4px] border border-border bg-surface-input text-[13px] text-text-primary outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)] mb-4 transition-all duration-[167ms]"
             />
             <div className="flex justify-end gap-2">
-              <button onClick={() => setRenameTarget(null)} className="h-8 px-4 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors">
+              <button onClick={() => setRenameTarget(null)} className="h-8 px-4 rounded-[4px] text-[12px] font-medium border border-border bg-surface-card text-text-primary hover:bg-surface-hover transition-all duration-[167ms]">
                 Cancel
               </button>
-              <button onClick={handleRename} disabled={!renameName.trim()} className="h-8 px-4 rounded-md text-[12px] font-medium bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:pointer-events-none transition-colors">
+              <button onClick={handleRename} disabled={!renameName.trim()} className="h-8 px-4 rounded-[4px] text-[12px] font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-40 disabled:pointer-events-none transition-all duration-[167ms]">
                 Save
               </button>
             </div>
@@ -374,18 +374,18 @@ export default function Devices() {
 
       {/* Forget Confirmation */}
       {forgetTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setForgetTarget(null)}>
-          <div className="bg-surface rounded-lg border border-border p-5 w-[360px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[13px] font-semibold text-text-primary mb-2">Forget Device</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-surface-smoke)]" onClick={() => setForgetTarget(null)}>
+          <div className="bg-surface-dialog rounded-[8px] border border-border shadow-[var(--shadow-dialog)] p-5 w-[360px]" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[14px] font-semibold text-text-primary mb-2">Forget Device</h3>
             <p className="text-[12px] text-text-secondary leading-relaxed mb-4">
-              Are you sure you want to forget <strong className="text-text-primary">{forgetTarget.friendly_name}</strong>? This will remove the trust relationship from both devices. You'll need to scan a QR code to pair again.
+              Are you sure you want to forget <strong className="text-text-primary">{forgetTarget.friendly_name}</strong>? You'll need to pair again to connect.
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setForgetTarget(null)} className="h-8 px-4 rounded-md text-[12px] font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors">
+              <button onClick={() => setForgetTarget(null)} className="h-8 px-4 rounded-[4px] text-[12px] font-medium border border-border bg-surface-card text-text-primary hover:bg-surface-hover transition-all duration-[167ms]">
                 Cancel
               </button>
-              <button onClick={handleForget} className="h-8 px-4 rounded-md text-[12px] font-medium bg-danger text-white hover:bg-danger/90 transition-colors">
-                Forget Device
+              <button onClick={handleForget} className="h-8 px-4 rounded-[4px] text-[12px] font-medium bg-danger text-white hover:bg-danger/90 transition-all duration-[167ms]">
+                Forget
               </button>
             </div>
           </div>

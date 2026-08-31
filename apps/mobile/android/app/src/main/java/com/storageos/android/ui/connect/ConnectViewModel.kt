@@ -256,6 +256,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     Log.i(TAG, "LAN health: ${health.status}")
                     if (health.status == "ok") {
                         val pairCode = v2.code.replace("-", "")
+                        val myAddress = "${getLocalIpAddress()}:${com.storageos.android.server.StorageServer.DEFAULT_PORT}"
                         try {
                             client.pairInitiate(PairInitiateV2Request(
                                 pairCode = pairCode,
@@ -264,9 +265,9 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                                 deviceKind = "android",
                                 platform = "Android ${android.os.Build.VERSION.RELEASE}",
                                 version = "0.1.0",
+                                address = myAddress,
                             ))
                         } catch (_: Exception) {
-                            val myAddress = "${getLocalIpAddress()}:${com.storageos.android.server.StorageServer.DEFAULT_PORT}"
                             try {
                                 client.pairDevice(PairDeviceRequest(
                                     deviceId = myDeviceId,
@@ -388,6 +389,17 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
         }
+    }
+
+    fun renameDevice(deviceId: String, newName: String) {
+        val device = deviceStore.findByDeviceId(deviceId) ?: return
+        deviceStore.save(device.copy(name = newName))
+        _state.value = _state.value.copy(savedDevices = deviceStore.loadAll())
+    }
+
+    fun removeDevice(deviceId: String) {
+        deviceStore.remove(deviceId)
+        _state.value = _state.value.copy(savedDevices = deviceStore.loadAll())
     }
 
     fun connectToSaved(device: SavedDevice, onConnected: (AgentApi) -> Unit) {

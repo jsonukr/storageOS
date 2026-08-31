@@ -1,24 +1,24 @@
 import type { InputSize } from "./Input.types";
 
 const base =
-  "w-full bg-surface border border-border rounded-md text-text-primary placeholder:text-text-secondary transition-colors duration-200 focus:outline-2 focus:outline-offset-0 focus:outline-accent disabled:opacity-50 disabled:cursor-not-allowed";
+  "w-full bg-surface-input border border-border rounded-[4px] text-text-primary placeholder:text-text-tertiary transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)] hover:bg-surface-input-hover focus:outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed";
 
 const sizes: Record<InputSize, string> = {
-  sm: "h-8 px-3 text-sm",
-  md: "h-9 px-3 text-sm",
-  lg: "h-10 px-4 text-base",
+  sm: "h-7 px-2.5 text-[12px]",
+  md: "h-8 px-3 text-[13px]",
+  lg: "h-9 px-3.5 text-[14px]",
 };
 
 const withLeadingIcon: Record<InputSize, string> = {
-  sm: "pl-8",
-  md: "pl-9",
-  lg: "pl-10",
+  sm: "pl-7",
+  md: "pl-8",
+  lg: "pl-9",
 };
 
 const withTrailingIcon: Record<InputSize, string> = {
-  sm: "pr-8",
-  md: "pr-9",
-  lg: "pr-10",
+  sm: "pr-7",
+  md: "pr-8",
+  lg: "pr-9",
 };
 
 export function getInputClasses(
@@ -30,6 +30,6 @@ export function getInputClasses(
   let classes = `${base} ${sizes[size]}`;
   if (hasLeadingIcon) classes += ` ${withLeadingIcon[size]}`;
   if (hasTrailingIcon) classes += ` ${withTrailingIcon[size]}`;
-  if (hasError) classes += " border-red-500 focus:outline-red-500";
+  if (hasError) classes += " border-danger focus:border-danger focus:shadow-[0_0_0_1px_var(--color-danger)]";
   return classes;
 }

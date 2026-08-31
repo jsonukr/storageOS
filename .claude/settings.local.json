@@ -73,7 +73,14 @@
       "WebFetch(domain:github.com)",
       "Bash(ls \"s:\\\\P\\\\StorageOS\\\\\" 2>&1 | head -30)",
       "Read(//s/P/**)",
-      "PowerShell(& \"$env:USERPROFILE\\\\.cargo\\\\bin\\\\cargo.exe\" check --manifest-path \"$\\(\\(Get-Location\\).Path\\)\\\\src-tauri\\\\Cargo.toml\" 2>&1 | Select-Object -Last 10)"
+      "PowerShell(& \"$env:USERPROFILE\\\\.cargo\\\\bin\\\\cargo.exe\" check --manifest-path \"$\\(\\(Get-Location\\).Path\\)\\\\src-tauri\\\\Cargo.toml\" 2>&1 | Select-Object -Last 10)",
+      "Bash(curl -s http://127.0.0.1:19742/health)",
+      "Bash(curl -s http://127.0.0.1:19742/pair)",
+      "Bash(git -C \"s:/P/StorageOS\" status --short -- apps/mobile/android/app/src/main/java/com/storageos/android/ui/pair/)",
+      "Bash(git -C \"s:/P/StorageOS\" diff HEAD --stat -- apps/mobile/)",
+      "PowerShell(git -C S:\\\\P\\\\StorageOS diff HEAD -- apps/mobile/android/app/src/main/java/com/storageos/android/ui/navigation/AppNavigation.kt apps/mobile/android/app/src/main/java/com/storageos/android/ui/connect/ConnectViewModel.kt)",
+      "Bash(git -C \"s:/P/StorageOS\" diff HEAD -- apps/mobile/android/app/src/main/java/com/storageos/android/ui/navigation/AppNavigation.kt)",
+      "Bash(git -C \"s:/P/StorageOS\" show HEAD:services/storageos-agent/src/relay.rs)"
     ]
   }
 }

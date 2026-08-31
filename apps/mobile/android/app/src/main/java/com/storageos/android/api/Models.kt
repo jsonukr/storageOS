@@ -95,6 +95,7 @@ data class PairInitiateV2Request(
     @SerialName("public_key") val publicKey: String = "",
     val fingerprint: String = "",
     val capabilities: List<String> = emptyList(),
+    val address: String = "",
 )
 
 @Serializable

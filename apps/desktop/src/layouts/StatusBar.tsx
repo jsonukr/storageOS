@@ -34,15 +34,15 @@ function agentDotColor(state: AgentConnectionState): string {
 function agentLabel(state: AgentConnectionState): string {
   switch (state) {
     case "connected":
-      return "Agent Connected";
+      return "Agent";
     case "connecting":
-      return "Connecting...";
+      return "Connecting";
     case "starting":
-      return "Starting Agent...";
+      return "Starting";
     case "error":
-      return "Agent Error";
+      return "Error";
     case "offline":
-      return "Agent Offline";
+      return "Offline";
   }
 }
 
@@ -63,11 +63,11 @@ function relayDotColor(status: RelayStatus): string {
 function relayLabel(status: RelayStatus): string {
   switch (status) {
     case "connected":
-      return "Relay Connected";
+      return "Relay";
     case "connecting":
-      return "Relay Connecting...";
+      return "Relay…";
     case "disconnected":
-      return "Relay Disconnected";
+      return "Relay Off";
     case "failed":
       return "Relay Failed";
     case "disabled":
@@ -145,7 +145,7 @@ export function StatusBar() {
 
   if (isSearchActive) {
     if (searchLoading) {
-      itemText = "Searching...";
+      itemText = "Searching…";
       if (searchProgress) {
         progressText = `${formatCount(searchProgress.directories_scanned)} folders · ${formatCount(searchProgress.files_scanned)} files · ${formatCount(searchProgress.matches_found)} matches`;
       }
@@ -153,55 +153,59 @@ export function StatusBar() {
       const count = searchResults.length;
       itemText = `${count} result${count !== 1 ? "s" : ""}`;
       if (searchDurationMs !== null) {
-        durationText = `Search completed in ${formatDuration(searchDurationMs)}`;
+        durationText = formatDuration(searchDurationMs);
       }
     } else {
-      itemText = "Searching...";
+      itemText = "Searching…";
     }
   } else {
     const itemCount = entries.length;
-    itemText = loading ? "Loading..." : `${itemCount} item${itemCount !== 1 ? "s" : ""}`;
+    itemText = loading ? "Loading…" : `${itemCount} item${itemCount !== 1 ? "s" : ""}`;
   }
   const selectionText = selectedEntries.length === 1
-    ? `"${selectedEntries[0].name}" selected`
+    ? `"${selectedEntries[0].name}"`
     : selectedEntries.length > 1
-      ? `${selectedEntries.length} items selected`
+      ? `${selectedEntries.length} selected`
       : null;
   const clipboardText = clipboardCount > 0
-    ? `${clipboardCount} item${clipboardCount !== 1 ? "s" : ""} ${clipboardOperation === "cut" ? "cut" : "copied"}`
+    ? `${clipboardCount} ${clipboardOperation === "cut" ? "cut" : "copied"}`
     : null;
 
   const transportLabel = remoteDevice && remoteTransport
-    ? `Connected via ${TRANSPORT_LABELS[remoteTransport]}`
+    ? TRANSPORT_LABELS[remoteTransport]
     : agentState === "connected"
-      ? "LAN Connected"
-      : "LAN";
+      ? "LAN"
+      : "";
 
   return (
-    <footer className="flex h-6 items-center border-t border-border bg-statusbar px-3 text-[11px] text-text-secondary select-none">
-      <div className="flex items-center gap-3">
+    <footer className="flex h-[22px] items-center border-t border-border bg-statusbar px-2.5 text-[11px] text-text-secondary select-none" role="status">
+      <div className="flex items-center gap-2.5">
         <StatusItem>
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${agentDotColor(agentState)}`} title={agentLabel(agentState)} />
+          <span className={`inline-block h-[5px] w-[5px] rounded-full ${agentDotColor(agentState)}`} title={agentLabel(agentState)} />
           {agentLabel(agentState)}
           {agentState === "connected" && agentVersion && (
-            <span className="text-text-tertiary ml-0.5">v{agentVersion}</span>
+            <span className="text-text-tertiary">v{agentVersion}</span>
           )}
         </StatusItem>
-        <StatusDivider />
-        <StatusItem>
-          {transportLabel}
-          {remoteDevice && remoteQuality !== "offline" && (
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ml-0.5 ${qualityDotColor(remoteQuality)}`}
-              title={`Quality: ${qualityLabel(remoteQuality)}`}
-            />
-          )}
-        </StatusItem>
+        {transportLabel && (
+          <>
+            <StatusDivider />
+            <StatusItem>
+              {transportLabel}
+              {remoteDevice && remoteQuality !== "offline" && (
+                <span
+                  className={`inline-block h-[5px] w-[5px] rounded-full ${qualityDotColor(remoteQuality)}`}
+                  title={qualityLabel(remoteQuality)}
+                />
+              )}
+            </StatusItem>
+          </>
+        )}
         {relayStatus !== "disabled" && (
           <>
             <StatusDivider />
             <StatusItem>
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${relayDotColor(relayStatus)}`} title={relayLabel(relayStatus)} />
+              <span className={`inline-block h-[5px] w-[5px] rounded-full ${relayDotColor(relayStatus)}`} title={relayLabel(relayStatus)} />
               {relayLabel(relayStatus)}
             </StatusItem>
           </>
@@ -230,7 +234,7 @@ export function StatusBar() {
           <>
             <StatusDivider />
             <StatusItem>
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="inline-block h-[5px] w-[5px] rounded-full bg-accent" />
               {clipboardText}
             </StatusItem>
           </>
@@ -240,10 +244,11 @@ export function StatusBar() {
       {agentState === "connected" && (
         <button
           onClick={() => setShowPairDialog(true)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors mr-2"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] text-[11px] text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-all duration-[83ms] mr-1.5"
           title="Pair mobile device"
+          aria-label="Pair mobile device"
         >
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <rect x="3" y="0.5" width="6" height="11" rx="1" stroke="currentColor" strokeWidth="0.9" />
             <path d="M5 9.5h2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
           </svg>
@@ -258,10 +263,10 @@ export function StatusBar() {
 
 function StatusItem({ children }: { children: React.ReactNode }) {
   return (
-    <span className="flex items-center gap-1.5">{children}</span>
+    <span className="flex items-center gap-1">{children}</span>
   );
 }
 
 function StatusDivider() {
-  return <span className="w-px h-3 bg-border" />;
+  return <span className="w-px h-2.5 bg-border" aria-hidden="true" />;
 }

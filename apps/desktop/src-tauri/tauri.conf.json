@@ -36,5 +36,9 @@
     "shell": {
       "open": true
     }
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": ["binaries/storageos-agent"]
   }
 }

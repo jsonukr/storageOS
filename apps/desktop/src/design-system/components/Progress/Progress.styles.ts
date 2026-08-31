@@ -3,16 +3,16 @@ import type { ProgressSize, ProgressColor } from "./Progress.types";
 const trackBase = "w-full rounded-full bg-surface-tertiary overflow-hidden";
 
 const trackSizes: Record<ProgressSize, string> = {
-  sm: "h-1",
-  md: "h-2",
-  lg: "h-3",
+  sm: "h-[3px]",
+  md: "h-1.5",
+  lg: "h-2.5",
 };
 
 const barColors: Record<ProgressColor, string> = {
   accent: "bg-accent",
-  success: "bg-emerald-500",
-  warning: "bg-amber-500",
-  error: "bg-red-500",
+  success: "bg-success",
+  warning: "bg-warning",
+  error: "bg-danger",
 };
 
 export function getTrackClasses(size: ProgressSize): string {
@@ -20,5 +20,5 @@ export function getTrackClasses(size: ProgressSize): string {
 }
 
 export function getBarClasses(color: ProgressColor): string {
-  return `h-full rounded-full transition-all duration-300 ${barColors[color]}`;
+  return `h-full rounded-full transition-all duration-[250ms] [transition-timing-function:cubic-bezier(0,0,0,1)] ${barColors[color]}`;
 }

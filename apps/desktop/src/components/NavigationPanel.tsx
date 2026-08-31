@@ -26,37 +26,24 @@ const staticSections: NavSection[] = [
     label: "Quick Access",
     icon: <StarIcon />,
     items: [
+      { id: "recent", label: "Recent", icon: <RecentIcon /> },
       { id: "desktop", label: "Desktop", icon: <DesktopItemIcon /> },
       { id: "downloads", label: "Downloads", icon: <DownloadIcon /> },
       { id: "documents", label: "Documents", icon: <DocumentIcon /> },
     ],
   },
-  {
-    id: "favorites",
-    label: "Favorites",
-    icon: <HeartIcon />,
-    items: [],
-  },
 ];
 
 const tailSections: NavSection[] = [
   {
-    id: "cloud-storage",
-    label: "Cloud Storage",
+    id: "cloud-drives",
+    label: "Cloud Drives",
     icon: <CloudIcon />,
-    items: [],
-  },
-  {
-    id: "network",
-    label: "Network",
-    icon: <NetworkIcon />,
-    items: [],
-  },
-  {
-    id: "trash",
-    label: "Trash",
-    icon: <TrashIcon />,
-    items: [],
+    items: [
+      { id: "gdrive", label: "Google Drive", icon: <CloudIcon /> },
+      { id: "onedrive", label: "OneDrive", icon: <CloudIcon /> },
+      { id: "dropbox", label: "Dropbox", icon: <CloudIcon /> },
+    ],
   },
 ];
 
@@ -439,14 +426,6 @@ function StarIcon() {
   );
 }
 
-function HeartIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path d="M6 10.5S1 7.5 1 4.5a2.5 2.5 0 015 0 2.5 2.5 0 015 0c0 3-5 6-5 6z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function DriveIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -486,21 +465,11 @@ function CloudIcon() {
   );
 }
 
-function NetworkIcon() {
+function RecentIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <circle cx="6" cy="3" r="1.5" stroke="currentColor" strokeWidth="1" />
-      <circle cx="2.5" cy="9" r="1.5" stroke="currentColor" strokeWidth="1" />
-      <circle cx="9.5" cy="9" r="1.5" stroke="currentColor" strokeWidth="1" />
-      <path d="M6 4.5v2L2.5 7.5M6 6.5l3.5 1" stroke="currentColor" strokeWidth="0.8" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path d="M2 3h8M4.5 3V2h3v1M3 3l.5 7h5l.5-7" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="0.9" />
+      <path d="M6 3v3.5l2.5 1.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

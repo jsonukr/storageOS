@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,10 @@ pub struct ConnectedDevice {
     pub transport: String,
     pub connected_at: i64,
     pub last_seen: i64,
+    /// Unique per-connection id, assigned by `register`. Used so a stale
+    /// (replaced) session cannot unregister a newer connection's entry.
+    #[serde(skip)]
+    pub session_id: u64,
     #[serde(skip)]
     pub sender: mpsc::UnboundedSender<String>,
 }
@@ -56,6 +61,7 @@ pub struct ConnectionRegistry {
     devices: RwLock<HashMap<String, ConnectedDevice>>,
     pair_codes: RwLock<HashMap<String, PairCodeEntry>>,
     max_connections: usize,
+    next_session: AtomicU64,
 }
 
 impl ConnectionRegistry {
@@ -64,18 +70,25 @@ impl ConnectionRegistry {
             devices: RwLock::new(HashMap::new()),
             pair_codes: RwLock::new(HashMap::new()),
             max_connections,
+            next_session: AtomicU64::new(1),
         }
     }
 
+    /// Register a connection. Returns the session id assigned to it, which must
+    /// be passed back to `unregister` so a replaced session cannot evict the
+    /// connection that superseded it.
     pub async fn register(
         &self,
-        device: ConnectedDevice,
-    ) -> Result<(), RegistrationError> {
+        mut device: ConnectedDevice,
+    ) -> Result<u64, RegistrationError> {
         let mut devices = self.devices.write().await;
 
         if devices.len() >= self.max_connections && !devices.contains_key(&device.device_id) {
             return Err(RegistrationError::MaxConnectionsReached);
         }
+
+        let session_id = self.next_session.fetch_add(1, Ordering::Relaxed);
+        device.session_id = session_id;
 
         if let Some(existing) = devices.get(&device.device_id) {
             tracing::info!(
@@ -94,22 +107,37 @@ impl ConnectionRegistry {
             device_id = %device_id,
             device_name = %device_name,
             fingerprint = %fingerprint,
+            session_id,
             connected = devices.len(),
             "Device registered"
         );
 
-        Ok(())
+        Ok(session_id)
     }
 
-    pub async fn unregister(&self, device_id: &str, reason: &str) {
+    /// Remove a connection — but only if the stored entry is still *this*
+    /// session. If a newer connection has replaced it, leave the newer one
+    /// intact (otherwise a reconnect would orphan the device from the relay).
+    pub async fn unregister(&self, device_id: &str, session_id: u64, reason: &str) {
         let mut devices = self.devices.write().await;
-        if devices.remove(device_id).is_some() {
-            tracing::info!(
-                device_id = %device_id,
-                reason = %reason,
-                connected = devices.len(),
-                "Device unregistered"
-            );
+        match devices.get(device_id) {
+            Some(existing) if existing.session_id == session_id => {
+                devices.remove(device_id);
+                tracing::info!(
+                    device_id = %device_id,
+                    reason = %reason,
+                    connected = devices.len(),
+                    "Device unregistered"
+                );
+            }
+            Some(_) => {
+                tracing::debug!(
+                    device_id = %device_id,
+                    reason = %reason,
+                    "Unregister ignored — a newer session owns this device"
+                );
+            }
+            None => {}
         }
     }
 
@@ -175,7 +203,10 @@ impl ConnectionRegistry {
         }
     }
 
-    pub async fn stale_devices(&self, timeout_secs: u64) -> Vec<String> {
+    /// Returns `(device_id, session_id)` for every connection idle past the
+    /// timeout. The session id lets the reaper evict only the stale connection,
+    /// never a fresher one that reconnected in the meantime.
+    pub async fn stale_devices(&self, timeout_secs: u64) -> Vec<(String, u64)> {
         let now = now_epoch();
         let threshold = now - timeout_secs as i64;
         self.devices
@@ -183,7 +214,7 @@ impl ConnectionRegistry {
             .await
             .iter()
             .filter(|(_, d)| d.last_seen < threshold)
-            .map(|(id, _)| id.clone())
+            .map(|(id, d)| (id.clone(), d.session_id))
             .collect()
     }
 }

@@ -45,7 +45,7 @@ class StorageServer(
                 uri == "/pair/qr" && session.method == Method.GET -> servePairQr()
                 uri == "/roots" -> serveRoots()
                 uri == "/directory" -> serveDirectory(params["path"])
-                uri == "/download" -> serveDownload(params["path"])
+                uri == "/download" -> serveDownload(session, params["path"])
                 uri == "/mkdir" && session.method == Method.POST -> serveMkdir(session)
                 uri == "/rename" && session.method == Method.POST -> serveRename(session)
                 uri == "/entry" && session.method == Method.DELETE -> serveDelete(params["path"])
@@ -61,7 +61,8 @@ class StorageServer(
     private fun Response.withCors(): Response {
         addHeader("Access-Control-Allow-Origin", "*")
         addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        addHeader("Access-Control-Allow-Headers", "Content-Type")
+        addHeader("Access-Control-Allow-Headers", "Content-Type, Range")
+        addHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Disposition")
         return this
     }
 
@@ -153,7 +154,7 @@ class StorageServer(
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, body)
     }
 
-    private fun serveDownload(path: String?): Response {
+    private fun serveDownload(session: IHTTPSession, path: String?): Response {
         if (path.isNullOrBlank()) {
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Missing path parameter"))
         }
@@ -164,10 +165,55 @@ class StorageServer(
         }
 
         val mime = getMimeType(file.name) ?: "application/octet-stream"
+        val fileLen = file.length()
+
+        // Range request: stream only the requested byte window so media players
+        // can seek without downloading the whole file (mirrors the desktop agent).
+        val rangeHeader = session.headers["range"]
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            val range = parseByteRange(rangeHeader, fileLen)
+            if (range == null) {
+                val resp = newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, MIME_PLAINTEXT, "")
+                resp.addHeader("Content-Range", "bytes */$fileLen")
+                resp.addHeader("Accept-Ranges", "bytes")
+                return resp
+            }
+            val (start, end) = range
+            val length = end - start + 1
+            val fis = FileInputStream(file)
+            fis.channel.position(start)
+            val resp = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, length)
+            resp.addHeader("Content-Range", "bytes $start-$end/$fileLen")
+            resp.addHeader("Accept-Ranges", "bytes")
+            resp.addHeader("Content-Disposition", "inline; filename=\"${file.name}\"")
+            return resp
+        }
+
         val fis = FileInputStream(file)
-        val response = newFixedLengthResponse(Response.Status.OK, mime, fis, file.length())
+        val response = newFixedLengthResponse(Response.Status.OK, mime, fis, fileLen)
+        response.addHeader("Accept-Ranges", "bytes")
         response.addHeader("Content-Disposition", "attachment; filename=\"${file.name}\"")
         return response
+    }
+
+    /** Parse an HTTP `Range: bytes=...` header against a file length; null if unsatisfiable. */
+    private fun parseByteRange(value: String, fileLen: Long): Pair<Long, Long>? {
+        if (fileLen == 0L) return null
+        val spec = value.removePrefix("bytes=").split(",").firstOrNull()?.trim() ?: return null
+        val dash = spec.indexOf('-')
+        if (dash < 0) return null
+        val startS = spec.substring(0, dash)
+        val endS = spec.substring(dash + 1)
+        if (startS.isEmpty()) {
+            // Suffix range: last N bytes
+            val n = endS.toLongOrNull() ?: return null
+            if (n <= 0) return null
+            return Pair((fileLen - n).coerceAtLeast(0), fileLen - 1)
+        }
+        val start = startS.toLongOrNull() ?: return null
+        val end = if (endS.isEmpty()) fileLen - 1 else (endS.toLongOrNull() ?: return null).coerceAtMost(fileLen - 1)
+        if (start > end || start >= fileLen) return null
+        return Pair(start, end)
     }
 
     private fun readJsonBody(session: IHTTPSession): Map<String, String> {

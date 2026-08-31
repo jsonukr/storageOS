@@ -77,8 +77,8 @@ fn spawn_reaper(registry: Arc<registry::ConnectionRegistry>, timeout_secs: u64) 
         loop {
             ticker.tick().await;
             let stale = registry.stale_devices(timeout_secs).await;
-            for device_id in stale {
-                registry.unregister(&device_id, "heartbeat_timeout_reaper").await;
+            for (device_id, session_id) in stale {
+                registry.unregister(&device_id, session_id, "heartbeat_timeout_reaper").await;
             }
         }
     });

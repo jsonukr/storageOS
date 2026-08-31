@@ -19,13 +19,13 @@ export function TopNav() {
   const currentLabel = routeLabels[location.pathname] ?? "StorageOS";
 
   return (
-    <header className="flex h-11 items-center border-b border-border bg-surface px-2 gap-2">
+    <header className="flex h-11 items-center border-b border-border bg-surface px-2 gap-1.5">
       {/* Sidebar toggle */}
       <button
         onClick={toggleSidebar}
-        className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
+        className="rounded-[4px] p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)]"
         aria-label="Toggle sidebar"
-        title="Toggle sidebar"
+        title="Toggle sidebar (Ctrl+B)"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -35,23 +35,23 @@ export function TopNav() {
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-[13px]" aria-label="Breadcrumb">
         <span className="text-text-tertiary">StorageOS</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" className="text-text-tertiary shrink-0">
+        <svg width="12" height="12" viewBox="0 0 12 12" className="text-text-tertiary shrink-0" aria-hidden="true">
           <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className="font-medium text-text-primary">{currentLabel}</span>
+        <span className="font-semibold text-text-primary">{currentLabel}</span>
       </nav>
 
       {/* Search box (center) */}
       <SearchBox />
 
       {/* Right actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
+          className="rounded-[4px] p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)]"
           aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-          title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+          title={isDark ? "Light theme" : "Dark theme"}
         >
           {isDark ? (
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -65,9 +65,9 @@ export function TopNav() {
           )}
         </button>
 
-        {/* Notifications placeholder */}
+        {/* Notifications */}
         <button
-          className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
+          className="rounded-[4px] p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)]"
           aria-label="Notifications"
           title="Notifications"
         >
@@ -76,9 +76,9 @@ export function TopNav() {
           </svg>
         </button>
 
-        {/* Profile placeholder */}
+        {/* Profile */}
         <button
-          className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition-colors"
+          className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-accent/10 text-accent text-[11px] font-semibold hover:bg-accent/15 transition-all duration-[167ms]"
           aria-label="Profile"
           title="Profile"
         >
@@ -158,7 +158,7 @@ function SearchBox() {
     : "Search files and folders…  Ctrl+K";
 
   return (
-    <div className="flex-1 flex items-center gap-2 px-8 max-w-xl mx-auto">
+    <div className="flex-1 flex items-center gap-2 px-6 max-w-xl mx-auto">
       <div className="relative w-full">
         {searchLoading ? (
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 border-[1.5px] border-accent border-t-transparent rounded-full animate-spin" />
@@ -169,6 +169,7 @@ function SearchBox() {
             viewBox="0 0 14 14"
             fill="none"
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
+            aria-hidden="true"
           >
             <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
             <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
@@ -181,12 +182,13 @@ function SearchBox() {
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="w-full h-7 rounded-md border border-border bg-surface-secondary pl-8 pr-7 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
+          aria-label="Search files"
+          className="w-full h-7 rounded-[4px] border border-border bg-surface-input pl-8 pr-7 text-[12px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)] hover:bg-surface-input-hover transition-all duration-[167ms]"
         />
         {inputValue && (
           <button
             onClick={handleClear}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-[3px] p-0.5 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors duration-[83ms]"
             aria-label="Clear search"
             title="Clear search (Esc)"
           >
@@ -201,9 +203,9 @@ function SearchBox() {
           type="checkbox"
           checked={searchRecursive}
           onChange={handleToggleRecursive}
-          className="h-3 w-3 rounded border-border accent-accent cursor-pointer"
+          className="h-3 w-3 rounded-[3px] border-border accent-accent cursor-pointer"
         />
-        <span className="text-[11px] text-text-secondary whitespace-nowrap">Search subfolders</span>
+        <span className="text-[11px] text-text-secondary whitespace-nowrap">Subfolders</span>
       </label>
     </div>
   );

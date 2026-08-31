@@ -1,16 +1,24 @@
 export const fontFamily = {
-  sans: '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif',
-  mono: '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
+  sans: '"Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif',
+  mono: '"Cascadia Code", "JetBrains Mono", "Fira Code", monospace',
 } as const;
 
 export const fontSize = {
-  xs: "text-xs",
-  sm: "text-sm",
-  base: "text-base",
-  lg: "text-lg",
-  xl: "text-xl",
-  "2xl": "text-2xl",
-  "3xl": "text-3xl",
+  caption: "text-[12px] leading-[16px]",
+  body: "text-[14px] leading-[20px]",
+  bodyStrong: "text-[14px] leading-[20px] font-semibold",
+  bodyLarge: "text-[16px] leading-[22px]",
+  subtitle: "text-[20px] leading-[28px]",
+  title: "text-[28px] leading-[36px]",
+  titleLarge: "text-[40px] leading-[52px]",
+  display: "text-[68px] leading-[92px]",
+  xs: "text-[11px] leading-[14px]",
+  sm: "text-[12px] leading-[16px]",
+  base: "text-[14px] leading-[20px]",
+  lg: "text-[16px] leading-[22px]",
+  xl: "text-[20px] leading-[28px]",
+  "2xl": "text-[28px] leading-[36px]",
+  "3xl": "text-[40px] leading-[52px]",
 } as const;
 
 export const fontWeight = {

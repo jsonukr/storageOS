@@ -224,6 +224,8 @@ fn spawn_pair_event_handler(
                         fingerprint: event.payload.get("fingerprint")
                             .and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         capabilities: vec![],
+                        address: event.payload.get("address")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     };
 
                     tracing::info!(

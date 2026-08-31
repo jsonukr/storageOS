@@ -9,6 +9,9 @@ dist-ssr/
 target/
 Cargo.lock
 
+# Tauri sidecar binaries (built from services/storageos-agent before packaging, not committed)
+apps/desktop/src-tauri/binaries/
+
 # Android / Gradle
 .gradle/
 build/

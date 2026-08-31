@@ -15,9 +15,7 @@ import com.storageos.android.api.AgentApi
 import com.storageos.android.transfer.DownloadManager
 import com.storageos.android.transfer.UploadManager
 import com.storageos.android.ui.adaptive.AdaptiveScaffold
-import com.storageos.android.ui.adaptive.LocalWindowSizeClass
 import com.storageos.android.ui.adaptive.NavDestination
-import com.storageos.android.ui.adaptive.showNavigationRail
 import com.storageos.android.ui.browser.BrowserScreen
 import com.storageos.android.ui.browser.BrowserViewModel
 import com.storageos.android.ui.connect.ConnectScreen
@@ -40,9 +38,7 @@ fun AppNavigation() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: "connect"
     val isConnected = connectedApi != null
-    val windowSizeClass = LocalWindowSizeClass.current
-    val showRail = windowSizeClass.showNavigationRail() && isConnected
-        && currentRoute in listOf("browser", "devices", "transfers", "settings")
+    val showNav = isConnected && currentRoute in listOf("browser", "devices", "transfers", "settings")
 
     val navigateToDestination: (NavDestination) -> Unit = { dest ->
         if (currentRoute != dest.route) {
@@ -92,16 +88,10 @@ fun AppNavigation() {
                                 popUpTo("browser") { inclusive = true }
                             }
                         },
-                        onOpenSettings = {
-                            navController.navigate("settings")
-                        },
-                        onOpenDevices = {
-                            navController.navigate("devices")
-                        },
-                        onOpenTransfers = {
-                            navController.navigate("transfers")
-                        },
-                        showNavigationActions = !showRail,
+                        onOpenSettings = { navController.navigate("settings") },
+                        onOpenDevices = { navController.navigate("devices") },
+                        onOpenTransfers = { navController.navigate("transfers") },
+                        showNavigationActions = false,
                         downloadManager = downloadManager,
                         uploadManager = uploadManager,
                         viewModel = browserViewModel,
@@ -115,10 +105,10 @@ fun AppNavigation() {
                     DevicesScreen(
                         api = api,
                         onBack = {
-                            if (showRail) navController.navigate("browser") {
+                            navController.navigate("browser") {
                                 popUpTo("browser") { inclusive = true }
                                 launchSingleTop = true
-                            } else navController.popBackStack()
+                            }
                         },
                         onAddDevice = {
                             connectedApi = null
@@ -135,10 +125,10 @@ fun AppNavigation() {
                     downloadManager = downloadManager,
                     uploadManager = uploadManager,
                     onBack = {
-                        if (showRail) navController.navigate("browser") {
+                        navController.navigate("browser") {
                             popUpTo("browser") { inclusive = true }
                             launchSingleTop = true
-                        } else navController.popBackStack()
+                        }
                     },
                 )
             }
@@ -153,17 +143,17 @@ fun AppNavigation() {
             composable("settings") {
                 SettingsScreen(
                     onBack = {
-                        if (showRail) navController.navigate("browser") {
+                        navController.navigate("browser") {
                             popUpTo("browser") { inclusive = true }
                             launchSingleTop = true
-                        } else navController.popBackStack()
+                        }
                     },
                 )
             }
         }
     }
 
-    if (showRail) {
+    if (showNav) {
         AdaptiveScaffold(
             currentRoute = currentRoute,
             onNavigate = navigateToDestination,

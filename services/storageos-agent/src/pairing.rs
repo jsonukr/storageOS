@@ -21,6 +21,7 @@ pub struct PeerIdentity {
     pub public_key: String,
     pub fingerprint: String,
     pub capabilities: Vec<String>,
+    pub address: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +77,8 @@ pub struct PairInitiateRequest {
     pub fingerprint: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub address: String,
 }
 
 fn default_device_kind() -> String {
@@ -199,6 +202,7 @@ impl PairingManager {
             public_key: req.public_key.clone(),
             fingerprint: req.fingerprint.clone(),
             capabilities: req.capabilities.clone(),
+            address: req.address.clone(),
         });
         session.peer_connected_at = Some(Instant::now());
 

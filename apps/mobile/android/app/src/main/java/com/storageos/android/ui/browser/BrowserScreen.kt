@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -595,26 +596,8 @@ private fun HomeView(
         items(drives, key = { it.letter }) { drive ->
             DriveRow(drive = drive, onClick = { onDriveTap(drive) })
         }
-        item(key = "spacer-devices") {
-            Spacer(Modifier.height(8.dp))
-        }
-        item(key = "header-devices") {
-            SectionHeader(title = "Devices", icon = Icons.Default.Devices)
-        }
-        item(key = "device-phone") {
-            DeviceRow(
-                icon = Icons.Default.PhoneAndroid,
-                name = "This Phone",
-                isOnline = true,
-            )
-        }
-        item(key = "device-pc") {
-            DeviceRow(
-                icon = Icons.Default.Computer,
-                name = "My Computer",
-                isOnline = true,
-                onClick = onOpenDevices,
-            )
+        item(key = "spacer-bottom") {
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -713,52 +696,6 @@ private fun DriveRow(drive: DriveInfo, onClick: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun DeviceRow(
-    icon: ImageVector,
-    name: String,
-    isOnline: Boolean,
-    onClick: (() -> Unit)? = null,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = if (isOnline) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.size(36.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = if (isOnline) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = name,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        Surface(
-            shape = CircleShape,
-            color = if (isOnline) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.outlineVariant,
-            modifier = Modifier.size(8.dp),
-        ) {}
     }
 }
 
@@ -930,10 +867,10 @@ private fun EntryGrid(
     }
 
     val windowSizeClass = LocalWindowSizeClass.current
-    val gridMinSize = if (windowSizeClass.isExpandedWidth()) 140.dp else 100.dp
+    val columns = if (windowSizeClass.isExpandedWidth()) 4 else 3
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = gridMinSize),
+        columns = GridCells.Fixed(columns),
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -945,17 +882,23 @@ private fun EntryGrid(
 
             Box {
                 Surface(
-                    modifier = Modifier.combinedClickable(
-                        onClick = { onEntryTap(entry) },
-                        onLongClick = { showMenu = true },
-                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.85f)
+                        .combinedClickable(
+                            onClick = { onEntryTap(entry) },
+                            onLongClick = { showMenu = true },
+                        ),
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 1.dp,
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                     ) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
@@ -977,14 +920,14 @@ private fun EntryGrid(
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         )
                         if (!entry.isDirectory && entry.size > 0) {
                             Text(
                                 text = formatBytes(entry.size),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.CenterHorizontally),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             )
                         }
                     }

@@ -3,62 +3,242 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --color-surface: #ffffff;
-  --color-surface-secondary: #f8fafc;
-  --color-surface-tertiary: #f1f5f9;
-  --color-surface-hover: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-border-subtle: #f1f5f9;
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #64748b;
-  --color-text-tertiary: #94a3b8;
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-subtle: #eff6ff;
-  --color-accent-text: #1e40af;
-  --color-sidebar: #f8fafc;
-  --color-sidebar-hover: #f1f5f9;
-  --color-sidebar-active: #eff6ff;
-  --color-statusbar: #f8fafc;
-  --color-toolbar: #ffffff;
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger: #dc2626;
+  /* ── Windows 11 Fluent Design Tokens ── */
+
+  /* Light — WinUI 3 neutral palette */
+  --color-surface: #fafafa;
+  --color-surface-secondary: #f3f3f3;
+  --color-surface-tertiary: #ebebeb;
+  --color-surface-hover: #f0f0f0;
+  --color-surface-card: #ffffff;
+  --color-surface-card-hover: #fafafa;
+  --color-surface-flyout: #ffffff;
+  --color-surface-dialog: #ffffff;
+  --color-surface-input: #ffffff;
+  --color-surface-input-hover: #f9f9f9;
+  --color-surface-smoke: rgba(0, 0, 0, 0.3);
+
+  --color-border: #e5e5e5;
+  --color-border-subtle: #f0f0f0;
+  --color-border-strong: #d1d1d1;
+  --color-border-card: #e8e8e8;
+  --color-border-focus: #000000;
+
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #616161;
+  --color-text-tertiary: #9e9e9e;
+  --color-text-disabled: #bdbdbd;
+
+  --color-accent: #005fb8;
+  --color-accent-hover: #004c95;
+  --color-accent-pressed: #003d7a;
+  --color-accent-subtle: #e8f1fb;
+  --color-accent-text: #003d7a;
+
+  --color-sidebar: #f3f3f3;
+  --color-sidebar-hover: #e8e8e8;
+  --color-sidebar-active: #e0eef9;
+  --color-statusbar: #f3f3f3;
+  --color-toolbar: #fafafa;
+
+  --color-success: #0f7b0f;
+  --color-success-bg: #dff6dd;
+  --color-warning: #9d5d00;
+  --color-warning-bg: #fff4ce;
+  --color-danger: #c42b1c;
+  --color-danger-bg: #fde7e9;
+  --color-info: #005fb8;
+  --color-info-bg: #e8f1fb;
+
+  /* Fluent elevation shadows (layered) */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.14);
+  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.18);
+
+  /* Fluent motion curves */
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-accelerate: cubic-bezier(1, 0, 1, 1);
+  --ease-standard: cubic-bezier(0.8, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  /* Fluent durations */
+  --duration-ultra-fast: 50ms;
+  --duration-fast: 83ms;
+  --duration-normal: 167ms;
+  --duration-gentle: 250ms;
+  --duration-slow: 333ms;
+
+  /* Fluent radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Fluent spacing (4px base grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
 }
 
 @layer base {
   html {
-    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-feature-settings: normal;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    line-height: 1.43;
+    letter-spacing: normal;
   }
 
   body {
     @apply bg-surface text-text-primary;
   }
 
+  ::selection {
+    background: var(--color-accent);
+    color: white;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+    border-radius: 3px;
+  }
+
+  /* Fluent scrollbar (thin, subtle) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+  }
+
   .dark {
-    --color-surface: #1a1a2e;
-    --color-surface-secondary: #1e1e35;
-    --color-surface-tertiary: #252542;
-    --color-surface-hover: #252542;
-    --color-border: #2d2d4a;
-    --color-border-subtle: #252542;
-    --color-text-primary: #f1f5f9;
-    --color-text-secondary: #94a3b8;
-    --color-text-tertiary: #64748b;
-    --color-accent: #3b82f6;
-    --color-accent-hover: #60a5fa;
-    --color-accent-subtle: #1e2a4a;
-    --color-accent-text: #93c5fd;
-    --color-sidebar: #16162b;
-    --color-sidebar-hover: #252542;
-    --color-sidebar-active: #1e2a4a;
-    --color-statusbar: #16162b;
-    --color-toolbar: #1e1e35;
-    --color-success: #22c55e;
-    --color-warning: #f59e0b;
-    --color-danger: #ef4444;
+    /* Dark — WinUI 3 dark palette */
+    --color-surface: #202020;
+    --color-surface-secondary: #282828;
+    --color-surface-tertiary: #2e2e2e;
+    --color-surface-hover: #323232;
+    --color-surface-card: #2d2d2d;
+    --color-surface-card-hover: #333333;
+    --color-surface-flyout: #2c2c2c;
+    --color-surface-dialog: #2c2c2c;
+    --color-surface-input: #1e1e1e;
+    --color-surface-input-hover: #2a2a2a;
+    --color-surface-smoke: rgba(0, 0, 0, 0.5);
+
+    --color-border: #3d3d3d;
+    --color-border-subtle: #333333;
+    --color-border-strong: #555555;
+    --color-border-card: #3a3a3a;
+    --color-border-focus: #ffffff;
+
+    --color-text-primary: #f5f5f5;
+    --color-text-secondary: #adadad;
+    --color-text-tertiary: #787878;
+    --color-text-disabled: #5c5c5c;
+
+    --color-accent: #60cdff;
+    --color-accent-hover: #7dd7ff;
+    --color-accent-pressed: #98e0ff;
+    --color-accent-subtle: #1a3a4a;
+    --color-accent-text: #60cdff;
+
+    --color-sidebar: #1c1c1c;
+    --color-sidebar-hover: #333333;
+    --color-sidebar-active: #1a3a4a;
+    --color-statusbar: #1c1c1c;
+    --color-toolbar: #282828;
+
+    --color-success: #6ccb5f;
+    --color-success-bg: #1a3d16;
+    --color-warning: #fce100;
+    --color-warning-bg: #433519;
+    --color-danger: #ff99a4;
+    --color-danger-bg: #442726;
+    --color-info: #60cdff;
+    --color-info-bg: #1a3a4a;
+
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.12);
+    --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.26);
+    --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.26);
+    --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.36);
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+}
+
+/* ── Fluent Acrylic / Mica-like effects ── */
+@layer utilities {
+  .fluent-acrylic {
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+
+  .fluent-mica {
+    backdrop-filter: blur(60px) saturate(125%);
+    -webkit-backdrop-filter: blur(60px) saturate(125%);
+  }
+
+  .fluent-reveal-border {
+    border: 1px solid transparent;
+    transition: border-color var(--duration-fast) var(--ease-decelerate);
+  }
+
+  .fluent-reveal-border:hover {
+    border-color: var(--color-border);
+  }
+
+  .fluent-pill-indicator {
+    position: relative;
+  }
+
+  .fluent-pill-indicator::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 16px;
+    border-radius: 0 3px 3px 0;
+    background: var(--color-accent);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-decelerate),
+                height var(--duration-normal) var(--ease-decelerate);
+  }
+
+  .fluent-pill-indicator[data-active="true"]::before {
+    opacity: 1;
+  }
+
+  .fluent-pill-indicator:active::before {
+    height: 10px;
   }
 }

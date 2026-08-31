@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef, useEffect } from "react";
-import { useExplorerStore, getParentPath, isImageFile } from "../stores/explorer";
+import { useExplorerStore, getParentPath, isImageFile, isVideoFile, isMediaFile } from "../stores/explorer";
 import { useTransferStore } from "../stores/transfer";
 import { NavigationPanel } from "../components/NavigationPanel";
 import { PropertiesPanel } from "../components/PropertiesPanel";
@@ -10,7 +10,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { downloadDir } from "@tauri-apps/api/path";
 import { getThumbnail, pickFiles } from "@/lib/tauri";
 import { ExplorerService } from "@/services/ExplorerService";
-import { ConnectionManager, recordTransferResult, buildRemoteUrl } from "@/services/network";
+import { ConnectionManager, recordTransferResult, remoteFetch, buildRemoteUrl } from "@/services/network";
 
 // ── Thumbnail cache + load queue ──
 
@@ -39,6 +39,31 @@ async function loadThumb(filePath: string, size: number): Promise<string | null>
     const dataUrl = await getThumbnail(filePath, maxPx);
     thumbCache.set(filePath, dataUrl);
     return dataUrl;
+  } catch {
+    return null;
+  } finally {
+    thumbRelease();
+  }
+}
+
+// Remote images can't be thumbnailed locally (the path lives on the other device)
+// and the remote /download response carries Content-Disposition: attachment, which
+// blocks inline <img> rendering. So fetch the bytes over the device transport and
+// expose them as a blob URL — the same channel directory browsing already uses.
+const remoteImgCache = new Map<string, string>();
+
+async function loadRemoteImage(deviceId: string, fullPath: string): Promise<string | null> {
+  const key = `${deviceId}:${fullPath}`;
+  const cached = remoteImgCache.get(key);
+  if (cached) return cached;
+  await thumbAcquire();
+  try {
+    const res = await remoteFetch({ deviceId, path: `/download?path=${encodeURIComponent(fullPath)}` });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    remoteImgCache.set(key, url);
+    return url;
   } catch {
     return null;
   } finally {
@@ -222,7 +247,7 @@ export default function Explorer() {
 
       {/* ── Remote device banner ── */}
       {remoteDevice && (
-        <div className="flex items-center gap-2 border-b border-border bg-accent/10 px-3 py-1.5 text-xs">
+        <div className="flex items-center gap-2 border-b border-border bg-[var(--color-info-bg)] px-3 py-1.5 text-[12px]">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
             <line x1="12" y1="18" x2="12.01" y2="18" />
@@ -231,7 +256,7 @@ export default function Explorer() {
           <span className="text-text-secondary">({ConnectionManager.getAddress(remoteDevice.deviceId) ?? "resolving..."})</span>
           <button
             onClick={exitRemoteBrowse}
-            className="ml-auto rounded px-2 py-0.5 text-xs font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+            className="ml-auto rounded-[4px] px-2 py-0.5 text-[11px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-all duration-[167ms]"
           >
             Disconnect
           </button>
@@ -240,6 +265,9 @@ export default function Explorer() {
 
       {/* ── Address Bar ── */}
       <AddressBar />
+
+      {/* ── File Type Filter Tabs ── */}
+      <FileTypeFilterBar />
 
       {/* ── Three-panel content ── */}
       <div className="flex flex-1 overflow-hidden">
@@ -276,6 +304,7 @@ export default function Explorer() {
       <PasteConflictDialog />
       <ContextMenu />
       <ImagePreview />
+      <MediaPreview />
     </div>
   );
 }
@@ -310,7 +339,7 @@ function AddressBar() {
 
   return (
     <div className="flex items-center gap-1.5 border-b border-border bg-toolbar px-2 py-1">
-      <div className="flex items-center flex-1 h-7 rounded-md border border-border bg-surface px-1.5 gap-0.5 text-[12px] overflow-hidden">
+      <div className="flex items-center flex-1 h-7 rounded-[4px] border border-border bg-surface-input px-1.5 gap-0.5 text-[12px] overflow-hidden">
         <BreadcrumbItem
           label={rd ? rd.name : "This PC"}
           first
@@ -328,7 +357,7 @@ function AddressBar() {
         ))}
       </div>
       <button
-        className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary transition-colors disabled:opacity-35 disabled:pointer-events-none"
+        className="rounded-[4px] p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary transition-all duration-[167ms] disabled:opacity-40 disabled:pointer-events-none"
         aria-label="Refresh"
         title="Refresh"
         disabled={currentPath === null}
@@ -338,6 +367,59 @@ function AddressBar() {
           <path d="M11.5 7A4.5 4.5 0 112.5 7M2.5 3v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
+    </div>
+  );
+}
+
+// ── File Type Filter ──
+
+const FILE_TYPE_FILTERS = [
+  { id: "all", label: "All", icon: null },
+  { id: "image", label: "Images" },
+  { id: "video", label: "Videos" },
+  { id: "document", label: "Documents" },
+  { id: "archive", label: "Archives" },
+  { id: "other", label: "Others" },
+] as const;
+
+const DOCUMENT_EXTS = new Set(["pdf","doc","docx","odt","rtf","xls","xlsx","ods","csv","ppt","pptx","odp","txt","md"]);
+
+function matchesFileTypeFilter(entry: DirectoryEntry, filter: string): boolean {
+  if (filter === "all") return true;
+  if (entry.is_directory) return filter === "all";
+  const ext = (entry.extension ?? "").toLowerCase();
+  switch (filter) {
+    case "image": return IMAGE_EXTS.has(ext);
+    case "video": return VIDEO_EXTS.has(ext);
+    case "document": return DOCUMENT_EXTS.has(ext);
+    case "archive": return ARCHIVE_EXTS.has(ext);
+    case "other": return !IMAGE_EXTS.has(ext) && !VIDEO_EXTS.has(ext) && !DOCUMENT_EXTS.has(ext) && !ARCHIVE_EXTS.has(ext) && !AUDIO_EXTS.has(ext);
+    default: return true;
+  }
+}
+
+function FileTypeFilterBar() {
+  const currentPath = useExplorerStore((s) => s.currentPath);
+  const fileTypeFilter = useExplorerStore((s) => s.fileTypeFilter);
+  const setFileTypeFilter = useExplorerStore((s) => s.setFileTypeFilter);
+
+  if (currentPath === null) return null;
+
+  return (
+    <div className="flex items-center gap-1 border-b border-border bg-surface px-3 py-1">
+      {FILE_TYPE_FILTERS.map((f) => (
+        <button
+          key={f.id}
+          onClick={() => setFileTypeFilter(f.id)}
+          className={`px-2.5 py-[3px] rounded-md text-[11px] font-medium transition-all duration-[167ms] ${
+            fileTypeFilter === f.id
+              ? "bg-accent text-white"
+              : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+          }`}
+        >
+          {f.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -359,17 +441,23 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const searchError = useExplorerStore((s) => s.searchError);
 
   const showHidden = useExplorerStore((s) => s.showHiddenItems);
+  const fileTypeFilter = useExplorerStore((s) => s.fileTypeFilter);
   const isSearchActive = searchQuery.length > 0;
 
   useEffect(() => {
     if (currentPath && areaRef.current) areaRef.current.focus();
   }, [currentPath]);
 
-  const filterHidden = (items: DirectoryEntry[]) =>
-    showHidden ? items : items.filter((e) => !e.hidden);
+  const filterEntries = (items: DirectoryEntry[]) => {
+    let filtered = showHidden ? items : items.filter((e) => !e.hidden);
+    if (fileTypeFilter !== "all") {
+      filtered = filtered.filter((e) => e.is_directory || matchesFileTypeFilter(e, fileTypeFilter));
+    }
+    return filtered;
+  };
 
   const renderView = (items: DirectoryEntry[]) => {
-    const filtered = filterHidden(items);
+    const filtered = filterEntries(items);
     if (viewMode === "details") return <DetailsView entries={filtered} areaRef={areaRef} />;
     if (viewMode === "list") return <ListView entries={filtered} areaRef={areaRef} />;
     return <GridView entries={filtered} viewMode={viewMode} areaRef={areaRef} />;
@@ -595,7 +683,7 @@ function DetailsHeader() {
   const colClass = "flex items-center gap-0.5 cursor-pointer hover:text-text-secondary transition-colors";
 
   return (
-    <div className="flex items-center h-7 border-b border-border-subtle px-3 text-[11px] font-medium text-text-tertiary select-none bg-surface-secondary">
+    <div className="flex items-center h-7 border-b border-border px-3 text-[11px] font-medium text-text-tertiary select-none bg-surface-secondary">
       <span className={`flex-1 min-w-0 ${colClass}`} onClick={(e) => { e.stopPropagation(); handleSort("name"); }}>
         Name <SortArrow field="name" />
       </span>
@@ -778,7 +866,11 @@ function ListView({ entries, areaRef }: { entries: DirectoryEntry[]; areaRef: Re
 }
 
 function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: number }) {
-  const [src, setSrc] = useState<string | null>(() => thumbCache.get(entry.full_path) ?? null);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
+  const remoteKey = remoteDevice ? `${remoteDevice.deviceId}:${entry.full_path}` : null;
+  const [src, setSrc] = useState<string | null>(
+    () => (remoteKey ? remoteImgCache.get(remoteKey) : thumbCache.get(entry.full_path)) ?? null,
+  );
   const [loadError, setLoadError] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const cancelled = useRef(false);
@@ -792,12 +884,16 @@ function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: num
     const el = ref.current;
     if (!el) return;
     if (entry.is_directory || getFileCategory(entry.extension) !== "image" || size < 32) return;
-    if (thumbCache.has(entry.full_path)) { setSrc(thumbCache.get(entry.full_path)!); return; }
+    const hasCached = remoteKey ? remoteImgCache.has(remoteKey) : thumbCache.has(entry.full_path);
+    if (hasCached) { setSrc((remoteKey ? remoteImgCache.get(remoteKey) : thumbCache.get(entry.full_path))!); return; }
     const observer = new IntersectionObserver(
       ([e]) => {
         if (!e.isIntersecting) return;
         observer.disconnect();
-        loadThumb(entry.full_path, size).then(url => {
+        const load = remoteDevice
+          ? loadRemoteImage(remoteDevice.deviceId, entry.full_path)
+          : loadThumb(entry.full_path, size);
+        load.then(url => {
           if (!cancelled.current) { if (url) setSrc(url); else setLoadError(true); }
         });
       },
@@ -805,7 +901,7 @@ function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: num
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [entry.full_path, entry.is_directory, entry.extension, size]);
+  }, [entry.full_path, entry.is_directory, entry.extension, size, remoteDevice, remoteKey]);
 
   if (entry.is_directory) {
     return (
@@ -1632,7 +1728,7 @@ function ContextMenu() {
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-50 min-w-[180px] rounded-lg border border-border bg-surface shadow-lg py-1 text-[12px]"
+      className="fixed z-50 min-w-[180px] rounded-[8px] border border-border bg-surface-flyout shadow-[var(--shadow-flyout)] py-1 text-[12px]"
       style={{ left: x, top: y }}
     >
       {entry ? (
@@ -1647,6 +1743,13 @@ function ContextMenu() {
           {isImageFile(entry) && (
             <ContextMenuItem
               label="Preview"
+              shortcut="Enter"
+              onAction={() => { openEntry(entry); hide(); }}
+            />
+          )}
+          {isMediaFile(entry) && (
+            <ContextMenuItem
+              label="Play"
               shortcut="Enter"
               onAction={() => { openEntry(entry); hide(); }}
             />
@@ -1746,7 +1849,7 @@ function ContextMenuItem({ label, shortcut, onAction, danger = false, disabled =
       role="menuitem"
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); if (!disabled) onAction(); }}
       disabled={disabled}
-      className={`flex items-center justify-between w-full text-left px-3 py-1.5 transition-colors disabled:opacity-35 disabled:pointer-events-none ${
+      className={`flex items-center justify-between w-full text-left px-3 py-[5px] transition-all duration-[83ms] disabled:opacity-40 disabled:pointer-events-none ${
         danger
           ? "text-danger hover:bg-danger/10"
           : "text-text-primary hover:bg-surface-hover"
@@ -1785,35 +1888,46 @@ function ImagePreview() {
 
   const imageLoadStart = useRef(0);
 
-  const getImageSrc = useCallback((e: { full_path: string }): string => {
-    if (remoteDevice) {
-      return buildRemoteUrl(remoteDevice.deviceId, `/download?path=${encodeURIComponent(e.full_path)}`) ?? "";
-    }
-    return convertFileSrc(e.full_path);
-  }, [remoteDevice]);
-
-  const src = entry ? getImageSrc(entry) : "";
+  const [src, setSrc] = useState<string>("");
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !entry) { setSrc(""); return; }
     setLoading(true);
     setError(false);
     setScale(1);
     setOffset({ x: 0, y: 0 });
     imageLoadStart.current = performance.now();
-  }, [src, active]);
+
+    if (!remoteDevice) {
+      setSrc(convertFileSrc(entry.full_path));
+      return;
+    }
+    // Remote: fetch via device transport into a blob URL (see loadRemoteImage).
+    let alive = true;
+    setSrc("");
+    loadRemoteImage(remoteDevice.deviceId, entry.full_path).then((url) => {
+      if (!alive) return;
+      if (url) setSrc(url);
+      else { setError(true); setLoading(false); }
+    });
+    return () => { alive = false; };
+  }, [active, entry, remoteDevice]);
 
   useEffect(() => {
     if (!active) return;
     const preload = (i: number) => {
       if (i >= 0 && i < images.length) {
-        const img = new Image();
-        img.src = getImageSrc(images[i]);
+        if (remoteDevice) {
+          loadRemoteImage(remoteDevice.deviceId, images[i].full_path);
+        } else {
+          const img = new Image();
+          img.src = convertFileSrc(images[i].full_path);
+        }
       }
     };
     preload(index + 1);
     preload(index - 1);
-  }, [index, images, getImageSrc, active]);
+  }, [index, images, active, remoteDevice]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -1992,6 +2106,185 @@ function ImagePreview() {
   );
 }
 
+// ── Media Preview (video / audio) ──
+//
+// Local media plays through the Tauri asset protocol (native Range support).
+// Remote media points the <video>/<audio> element straight at the device's
+// /download endpoint via buildRemoteUrl — the browser issues native Range
+// requests, which the agent now answers with 206 Partial Content, so scrubbing
+// streams the requested byte window instead of buffering the whole file.
+function MediaPreview() {
+  const items = useExplorerStore((s) => s.mediaItems);
+  const index = useExplorerStore((s) => s.mediaIndex);
+  const close = useExplorerStore((s) => s.closeMediaPreview);
+  const next = useExplorerStore((s) => s.mediaNext);
+  const prev = useExplorerStore((s) => s.mediaPrev);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const loadStart = useRef(0);
+
+  const active = items.length > 0 && index >= 0;
+  const entry = active ? items[index] : null;
+  const isVideo = entry ? isVideoFile(entry) : false;
+
+  const src = !entry
+    ? ""
+    : remoteDevice
+      ? buildRemoteUrl(remoteDevice.deviceId, `/download?path=${encodeURIComponent(entry.full_path)}`) ?? ""
+      : convertFileSrc(entry.full_path);
+
+  useEffect(() => {
+    if (!active) return;
+    if (!src) { setError(true); setLoading(false); return; }
+    setLoading(true);
+    setError(false);
+    loadStart.current = performance.now();
+  }, [src, active]);
+
+  if (!active || !entry) return null;
+
+  const hasNext = index < items.length - 1;
+  const hasPrev = index > 0;
+
+  const handleReady = () => {
+    setLoading(false);
+    setError(false);
+    if (remoteDevice) {
+      recordTransferResult(remoteDevice.deviceId, true, performance.now() - loadStart.current);
+    }
+  };
+  const handleError = () => {
+    setLoading(false);
+    setError(true);
+    if (remoteDevice) {
+      recordTransferResult(remoteDevice.deviceId, false);
+    }
+  };
+
+  const togglePlay = () => {
+    const el = isVideo ? videoRef.current : audioRef.current;
+    if (!el) return;
+    if (el.paused) void el.play(); else el.pause();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "ArrowRight") { e.preventDefault(); next(); return; }
+    if (e.key === "ArrowLeft") { e.preventDefault(); prev(); return; }
+    if (e.key === " ") { e.preventDefault(); togglePlay(); return; }
+  };
+
+  return (
+    <div
+      ref={(el) => { if (el) el.focus(); }}
+      className="fixed inset-0 z-[60] flex flex-col bg-black/95 select-none outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
+      {/* Top bar */}
+      <div className="flex items-center h-10 px-3 bg-black/60 shrink-0">
+        <span className="text-[13px] text-white/90 truncate flex-1" style={{ overflowWrap: "anywhere" }}>
+          {entry.name}
+        </span>
+        {items.length > 1 && (
+          <span className="text-[12px] text-white/50 mx-3 shrink-0">
+            {index + 1} / {items.length}
+          </span>
+        )}
+        <button
+          onClick={close}
+          className="flex items-center justify-center w-8 h-8 rounded text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Media area */}
+      <div className="flex-1 overflow-hidden relative flex items-center justify-center">
+        {loading && !error && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          </div>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+            </svg>
+            <span className="text-white/40 text-[13px]">Can't play this file</span>
+          </div>
+        )}
+
+        {isVideo ? (
+          <video
+            key={src}
+            ref={videoRef}
+            src={src}
+            controls
+            autoPlay
+            onLoadedData={handleReady}
+            onError={handleError}
+            className="max-w-full max-h-full"
+            style={{ opacity: loading || error ? 0 : 1 }}
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-8" style={{ opacity: loading || error ? 0 : 1 }}>
+            <div className="flex items-center justify-center w-32 h-32 rounded-full bg-white/5">
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7">
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+            </div>
+            <audio
+              key={src}
+              ref={audioRef}
+              src={src}
+              controls
+              autoPlay
+              onLoadedData={handleReady}
+              onError={handleError}
+              className="w-[360px] max-w-[80vw]"
+            />
+          </div>
+        )}
+
+        {/* Previous button */}
+        {hasPrev && (
+          <button
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+            className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 text-white/70 hover:bg-black/60 hover:text-white transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <polyline points="12,4 6,10 12,16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+
+        {/* Next button */}
+        {hasNext && (
+          <button
+            onClick={(e) => { e.stopPropagation(); next(); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 text-white/70 hover:bg-black/60 hover:text-white transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <polyline points="8,4 14,10 8,16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DialogOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
@@ -2137,7 +2430,7 @@ function SortDropdown() {
     <div className="relative">
       <button
         ref={ref}
-        className={`flex items-center gap-1 rounded px-1.5 py-1 text-[12px] transition-colors ${
+        className={`flex items-center gap-1 rounded-[4px] px-1.5 py-1 text-[12px] transition-all duration-[167ms] ${
           open ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
         }`}
         onClick={() => setOpen(!open)}
@@ -2196,7 +2489,7 @@ function ViewDropdown() {
     <div className="relative">
       <button
         ref={ref}
-        className={`flex items-center gap-1 rounded px-1.5 py-1 text-[12px] transition-colors ${
+        className={`flex items-center gap-1 rounded-[4px] px-1.5 py-1 text-[12px] transition-all duration-[167ms] ${
           open ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
         }`}
         onClick={() => setOpen(!open)}
@@ -2243,7 +2536,7 @@ function ToolbarButton({
 }) {
   return (
     <button
-      className="rounded-md p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-35 disabled:pointer-events-none transition-colors"
+      className="rounded-[4px] p-1.5 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 disabled:pointer-events-none transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)]"
       aria-label={label}
       disabled={disabled}
       title={label}
@@ -2255,7 +2548,7 @@ function ToolbarButton({
 }
 
 function ToolbarDivider() {
-  return <div className="w-px h-4 bg-border mx-1 shrink-0" />;
+  return <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" aria-hidden="true" />;
 }
 
 
@@ -2273,9 +2566,9 @@ function BreadcrumbItem({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors shrink-0 ${
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] transition-all duration-[83ms] shrink-0 ${
         active
-          ? "text-text-primary font-medium"
+          ? "text-text-primary font-semibold"
           : "text-text-secondary hover:bg-surface-hover cursor-pointer"
       }`}
     >

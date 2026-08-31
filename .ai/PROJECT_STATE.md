@@ -5,8 +5,10 @@
 ## Overview
 
 - **Project**: StorageOS — unified storage virtualization platform
-- **Phase**: Product Milestone 5 (Cross-Network File Transport) — Complete
-- **Status**: Desktop + Agent + Android app with image preview, file transfers, cross-device copy/paste, polished UI, networking abstraction layer
+- **Phase**: Product Milestone 5 (Cross-Network File Transport) — Complete; PM6 pairing + PM4 UI shipped
+- **Status**: Desktop + Agent + Android app with image/video/audio preview, Range streaming, file transfers, cross-device copy/paste, polished UI, networking abstraction layer
+- **Latest (2026-08-27)**: Media Preview & Range Streaming. Desktop `MediaPreview` overlay plays video/audio (local via Tauri asset protocol, remote via the device `/download` endpoint) with native seek. Agent and Android `StorageServer` both answer HTTP `Range` requests with `206 Partial Content` so scrubbing streams the requested byte window instead of buffering the whole file. `openEntry` routes media files to the new player; context menu gains a Play action; file-type filter bar (All/Images/Videos/Documents/Archives/Others) and remote image preview also shipped in this batch. Builds green: desktop `tsc` clean, agent `cargo build` clean, Android `compileDebugKotlin` successful. (See CHANGELOG 2026-08-27.)
+- **Prev (2026-07-10)**: HOTFIX — Trusted Device Network regression recovery. Restored all connection paths broken by the PM4 UI refactor (see CHANGELOG 2026-07-10). Root causes: (1) PairCodeTab owned PairViewModel with no DisposableEffect cleanup → duplicate same-device_id RelayClient conflict broke all relay connections; (2) `onSharePairing` never invoked → incoming-pairing approval UI unreachable; (3) only one saved device rendered; (4) PM6 V2 `/pair/initiate`+`/pair/approve` dropped peer address → presence poller skipped V2-paired devices → Desktop-could-not-browse-Phone asymmetry; (5) stale localhost-bound agent squatting on port 19742. Fix restored ConnectScreen to delegate sharing to PairScreen (as at HEAD) and threaded `address` through the V2 pair flow (agent pairing.rs/server.rs/main.rs, Android Models.kt/ConnectViewModel.kt). Verified live Desktop⇄Phone: LAN both directions, browse both directions, relay connected, registry symmetric with LAN endpoint. Builds: Windows desktop release + APK + agent (debug/release) all green, `tsc --noEmit` clean.
 
 ## Repository Structure
 
@@ -590,6 +592,21 @@ StorageOS/
   - Transfers page: `FolderRow` component with expand/collapse, folder icon, aggregate progress (bytesTransferred/speed/ETA computed from child jobs), status detail, cancel/remove
   - Child jobs hidden from main list via `isChildJob` filter, shown indented when folder row expanded
 
+## Media Preview & Range Streaming
+
+- [x] Desktop video/audio player (`MediaPreview` in `apps/desktop/src/pages/Explorer.tsx`)
+  - Full-screen overlay modeled on `ImagePreview`: name/counter/close top bar, loading spinner, error state, prev/next through folder media
+  - `<video controls autoPlay>` for video; `<audio controls autoPlay>` with music-note backdrop for audio — native scrub/volume/fullscreen controls
+  - Keyboard: Esc close, ←/→ prev-next file, Space play/pause
+  - Local: Tauri asset protocol (`convertFileSrc`); Remote: `buildRemoteUrl(deviceId, /download?path=)` so the browser makes native Range requests (no whole-file blob)
+  - `openEntry` routes: image → image preview, video/audio → media preview; context menu adds "Play"
+  - Store (`stores/explorer.ts`): `VIDEO_EXTENSIONS`/`AUDIO_EXTENSIONS`, `isVideoFile`/`isAudioFile`/`isMediaFile`, `mediaItems`/`mediaIndex` + open/close/next/prev actions
+- [x] HTTP Range streaming on `/download`
+  - Agent (`services/storageos-agent/src/server.rs`): `parse_byte_range()` → `206 Partial Content` (`Content-Range`/`Accept-Ranges`), `416` when unsatisfiable, `Accept-Ranges` on full responses
+  - Android (`StorageServer.kt`): matching `serveDownload` Range handling + `parseByteRange`; CORS allows `Range`, exposes `Content-Range`/`Accept-Ranges`
+  - Enables true media seeking for remote playback (PC↔PC and PC→phone), not just progressive download
+- [x] Explorer file-type filter bar (All/Images/Videos/Documents/Archives/Others) + remote image preview via device-transport blob URLs
+
 ## Domain Model
 
 - [x] `docs/architecture/DomainModel.md` — Canonical domain model (A-002.5)
@@ -1096,6 +1113,83 @@ Centralized relay URL configuration across all platforms. Relay is now enabled b
 - **Documentation** (`docs/architecture/Networking.md`): Updated Section 4.6 with config cascade, default URL table, TLS details. Updated Section 6.9 with hosted relay TLS architecture
 - **Zero hardcoded relay URLs remain**: Only `constants.rs` contains relay URLs; all other code references the constants or saves from QR/config
 
+### PM4: Native Adaptive UI/UX (2026-07-07) ✅
+
+**Goal**: StorageOS should feel native on every platform — Windows 11 Fluent Design on Desktop, Material 3 / Material You on Android, adaptive layouts for tablets. UI-only changes: no networking, pairing, filesystem, relay, or transfer engine modifications.
+
+#### Desktop — Windows 11 Fluent Design
+
+- **Design tokens** (`apps/desktop/src/styles/index.css`): Complete Fluent Design token overhaul
+  - Font: Inter → "Segoe UI Variable" with fallback stack
+  - Light theme: neutral grays (#fafafa surface, #005fb8 accent, #1a1a1a text)
+  - Dark theme: true dark (#202020 surface, #60cdff accent, #f5f5f5 text)
+  - New surfaces: surface-card, surface-flyout, surface-dialog, surface-input, surface-smoke
+  - Fluent motion curves: decelerate cubic-bezier(0,0,0,1), 167ms default duration, 83ms fast
+  - Elevation shadows: shadow-card, shadow-flyout, shadow-dialog
+  - Fluent utility classes: fluent-acrylic, fluent-mica, fluent-pill-indicator
+  - Custom scrollbar styles, ::selection, :focus-visible ring
+
+- **Token modules** (`apps/desktop/src/design-system/tokens/`):
+  - `typography.ts`: Segoe UI Variable, Fluent text styles
+  - `animation.ts`: Fluent durations (83ms fast, 167ms normal, 250ms slow) and easing functions
+  - `shadow.ts`: CSS variable-based shadows (card, tooltip, flyout, dialog)
+  - `radius.ts`: Exact Fluent values (4px, 6px, 8px, 12px)
+  - `colors.ts`: New surface/border/text variants
+
+- **Component styles** (12 components updated):
+  - Button: rounded-[4px], 167ms timing, accent-pressed state
+  - Card: rounded-[8px], shadow-card, border-card
+  - Input: surface-input bg, focus shadow ring
+  - Badge: CSS variable semantic colors
+  - DeviceCard, StorageCard: Fluent card hover effects
+  - TransferCard: Fluent border-card
+  - Progress: Thinner tracks, Fluent timing
+  - EmptyState, ErrorState, LoadingState: Updated sizing
+  - SearchInput: Fluent timing
+
+- **Layout components** (3 components rewritten):
+  - Sidebar: Fluent NavigationView (48px collapsed / 220px expanded), rounded-[4px] items, pill indicator with animated height, aria-label attributes
+  - TopNav: Fluent command bar, rounded-[4px] buttons, 167ms transitions, font-semibold breadcrumb, aria-hidden on decorative SVGs
+  - StatusBar: Compact 22px height, 5px status dots, short labels
+
+- **Pages**:
+  - Devices: surface-card with shadow-card, border-card, rounded-[8px], dialog surfaces with shadow-dialog and surface-smoke overlay
+  - PairDeviceDialog: Fluent dialog (shadow-dialog, rounded-[8px], surface-dialog bg, segmented tab control)
+  - Explorer: ToolbarButton (rounded-[4px], duration-[167ms]), ContextMenu (rounded-[8px], surface-flyout, shadow-flyout), AddressBar (rounded-[4px], surface-input), Breadcrumbs (rounded-[3px]), Sort/View dropdowns (rounded-[4px])
+
+#### Android — Material 3 Theme Enhancement
+
+- **Custom Typography** (`ui/theme/Type.kt`): 15 Material 3 text styles with SemiBold headlines, proper letter-spacing
+- **Custom Shapes** (`ui/theme/Shape.kt`): extraSmall=4dp, small=8dp, medium=12dp, large=16dp, extraLarge=28dp
+- **Theme** (`ui/theme/Theme.kt`): Full color palette with secondary/tertiary colors, surfaceContainer variants, inverseSurface, surfaceTint; integrated StorageOSTypography and StorageOSShapes
+
+#### Android — Tablet Adaptive Layouts
+
+- **WindowSizeClass** (`ui/adaptive/WindowSize.kt`): CompositionLocal for WindowSizeClass, helper extensions (isExpandedWidth, isMediumWidth, isCompactWidth, showNavigationRail)
+- **AdaptiveScaffold** (`ui/adaptive/AdaptiveScaffold.kt`): NavigationRail for medium/expanded width with 4 destinations (Files, Transfers, Devices, Settings)
+- **MainActivity**: Calculates WindowSizeClass and provides via CompositionLocalProvider
+- **AppNavigation**: Wraps connected screens with AdaptiveScaffold when on tablet; NavigationRail replaces TopAppBar nav buttons
+- **BrowserScreen**: `showNavigationActions` parameter — hides Transfers/Devices/Settings icons from TopAppBar when NavigationRail is visible; adaptive grid cell sizes (140dp on tablet, 100dp on phone)
+- **ConnectScreen**: Centered content with 420dp max width on tablet (full-width on phone)
+- **Dependency**: Added `material3-window-size-class` to build.gradle.kts
+
+#### Build Verification
+
+- Desktop: `tsc --noEmit` and `vite build` both pass clean
+- Android: `assembleDebug` BUILD SUCCESSFUL
+- No networking, pairing, filesystem, relay, or transfer engine changes
+
+### Fix: Cross-Network Pairing MVVM Ownership (2026-07-08) ✅
+
+**Problem**: PM4 UI refactor added inline pair code/QR generation to ConnectScreen's PairCodeTab using `DeviceIdentity` directly, bypassing PairViewModel. The pair code was never registered with the relay server — broke cross-network connections.
+
+**Fix**: PairCodeTab now delegates to PairViewModel:
+- `pairViewModel.init(context)` called via `LaunchedEffect` — creates RelayClient, connects, registers pair code
+- UI reads `pairState.pairCodeFormatted` and `pairState.qrPayload` from PairViewModel state
+- Removed independent `DeviceIdentity`, `DeviceStore`, `StorageServer`, `getLocalIpAddress()` from ConnectScreen
+- UI layout unchanged (Enter code + OR + Share your code with QR + pair code + copy)
+- Build: `assembleDebug` BUILD SUCCESSFUL
+
 ## Last Updated
 
-Infrastructure: Public Relay Integration (Render) (2026-07-07)
+Fix: Cross-Network Pairing MVVM Ownership (2026-07-08)

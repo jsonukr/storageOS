@@ -4,6 +4,103 @@ All notable changes to StorageOS, logged after each commit.
 
 ## [Unreleased]
 
+### Media Preview & Range Streaming
+
+#### 2026-08-27 — Video/audio player + HTTP Range streaming (desktop + agent + Android)
+
+**Goal**: Complete the media-browsing arc. Double-clicking a video or audio file now plays it in-app, for both local drives and remote (paired) devices, with true streaming/seek support end-to-end.
+
+- **Desktop — `MediaPreview` overlay** (`apps/desktop/src/pages/Explorer.tsx`):
+  - Full-screen player mirroring `ImagePreview`: top bar (name, N/M counter, close), spinner while loading, "Can't play this file" error state, prev/next through all media in the folder.
+  - Video → native `<video controls autoPlay>`; audio → `<audio controls autoPlay>` with a music-note backdrop. Native controls give scrub/volume/fullscreen.
+  - Keyboard: Esc close, ←/→ prev/next file, Space play/pause.
+  - **Local** media plays via Tauri asset protocol (`convertFileSrc`, native Range). **Remote** media points the element straight at the device's `/download` via `buildRemoteUrl` (direct address or relay proxy), so the browser issues native Range requests — no whole-file blob download.
+  - Context menu gains a **Play** action for media files; `openEntry` routes images → image preview, video/audio → media preview.
+- **Desktop store** (`apps/desktop/src/stores/explorer.ts`): `VIDEO_EXTENSIONS`/`AUDIO_EXTENSIONS` sets, `isVideoFile`/`isAudioFile`/`isMediaFile` helpers (exported), and `mediaItems`/`mediaIndex` + `openMediaPreview`/`closeMediaPreview`/`mediaNext`/`mediaPrev` actions.
+- **Agent — `/download` Range support** (`services/storageos-agent/src/server.rs`): `parse_byte_range()` (normal, open-ended, and suffix ranges) → `206 Partial Content` with `Content-Range`/`Accept-Ranges`, or `416` when unsatisfiable; full responses now advertise `Accept-Ranges: bytes`. (Also fixes `pair_approve` to register the peer's real address instead of an empty string.)
+- **Android — `StorageServer` Range parity** (`apps/mobile/android/.../server/StorageServer.kt`): `serveDownload` reads the `Range` header and returns `206`/`416` with matching headers (mirrors the Rust `parse_byte_range`); CORS now allows `Range` and exposes `Content-Range`/`Accept-Ranges`. Makes PC→phone video seeking work, not just progressive playback.
+- **Also in this batch (built earlier, now documented)**: file-type filter bar in Explorer (All/Images/Videos/Documents/Archives/Others) and remote image preview via device-transport blob URLs.
+
+**Build verification**: desktop `tsc --noEmit` clean; agent `cargo build` clean; Android `compileDebugKotlin` BUILD SUCCESSFUL.
+
+### PM4 — Native Adaptive UI/UX
+
+#### 2026-07-10 — HOTFIX: Restore Trusted Device Network (regression recovery)
+
+**Scope**: Regression recovery only — no new features, no redesign. Restores every connection path to pre-PM4-UI behavior while keeping the new tabbed UI.
+
+**Root causes found (adversarially verified by 49-agent audit + live testing)**:
+
+1. **[Code — UI regression] PairCodeTab dual RelayClient conflict**: The 2026-07-08 "fix" (below) made ConnectScreen's PairCodeTab own PairViewModel with `LaunchedEffect { init() }` but **no `DisposableEffect` cleanup** (HEAD's PairScreen had both). Opening the Pair Code tab started a RelayClient with the phone's device_id that stayed alive for the whole connect-screen lifetime. Any later relay connection (pair-code entry, QR relay fallback, saved-device relay reconnect) created a second RelayClient with the same device_id; the relay server's replace-then-unregister sequence (registry.rs unregisters by device_id with no session check) deterministically deleted the new connection's routing entry — every RelayAgentApi call then timed out. **This broke all relay-based connections.**
+2. **[Code — UI regression] Incoming-pairing approval flow dead**: The PM4 ConnectScreen accepted `onSharePairing` but never invoked it, making the "pair" route (PairScreen with the APPROVAL view) unreachable. PairCodeTab also ignored `pairState.view`, so an incoming `pair_initiate` froze the ViewModel in APPROVAL and pair-code regeneration stopped. "Share your code" pairing could never complete.
+3. **[Code — UI regression] Saved devices reduced to one**: Only `savedDevices.firstOrNull()` was rendered; all other saved devices became unreachable pre-connection.
+4. **[Code — PM6 regression, committed d674528] V2 pairing dropped address exchange**: `POST /pair/initiate` had no `address` field and `pair_approve` registered peers with `address: String::new()`. The presence poller skips devices with no address and no endpoints (presence.rs:23), so V2-paired devices never got endpoints, never came online, and could not be browsed — **the "Phone can browse Desktop but Desktop cannot browse Phone" asymmetry**. V1 pairing (`/devices/pair`) had always exchanged addresses.
+5. **[Environment] Stale localhost agent**: A manually-started agent (default bind 127.0.0.1) squatted on port 19742 for ~34h. The desktop app health-checks localhost and reports "connected" without spawning the correctly-bound (`--bind 0.0.0.0`) agent — so no device could reach the desktop over LAN.
+6. **[Environment] Phone WiFi was off** (mobile data/CGNAT) — no LAN path physically possible during earlier testing.
+
+**Fixes (restore-only)**:
+- `ConnectScreen.kt`: Removed PairViewModel ownership entirely (reverts the 07-08 change). PairCodeTab = "Enter a code" + "Share Pairing Info" button that navigates to PairScreen via `onSharePairing` — PairScreen owns the pairing session with proper `DisposableEffect` cleanup and the approval UI, exactly as at HEAD. Restored full saved-devices list (all devices rendered as cards, phone + tablet layouts). Removed `generateQrBitmap()` and unused imports.
+- `services/storageos-agent/src/pairing.rs`: `PairInitiateRequest` + `PeerIdentity` gained `address` (serde default — backward compatible).
+- `services/storageos-agent/src/server.rs`: `pair_approve` registers the peer's real address instead of `String::new()`.
+- `services/storageos-agent/src/main.rs`: relay `pair_initiate` handler now reads `address` from the payload.
+- `apps/mobile/android/.../api/Models.kt`: `PairInitiateV2Request` gained `address` (default `""`).
+- `apps/mobile/android/.../ui/connect/ConnectViewModel.kt`: `handleV2Qr` sends `<phoneLanIp>:19743` in `pairInitiate` (same value the V1 fallback always sent).
+
+**Verified live (Desktop ⇄ Phone SM-S911B)**: agent on 0.0.0.0 reachable from phone (`/health` ok); phone StorageServer reachable from desktop; full pairing chain `GET /pair → POST /pair/initiate (with address) → POST /pair/approve → GET /devices` registers the phone with address `192.168.1.39:19743`, a LAN endpoint (priority 10, reachable), and `trust_status: trusted`; presence poller advances `last_seen`, status `online`; **Desktop→Phone `/roots` and Phone→Desktop `/roots` both return real drive lists**; relay connected with pair-code lookup `found: true`. Builds: `cargo build` clean, `assembleDebug` BUILD SUCCESSFUL.
+
+**Known remaining issues (preexisting at HEAD, documented not fixed)**:
+- Relay server `unregister` removes by device_id without a session-identity check (registry.rs) — latent bug, dormant now that clients never hold duplicate connections.
+- Phone-side `PairViewModel.approve()` neither sends `pair_complete` nor saves the peer — "desktop enters phone's code" pairing completes on neither side (incomplete PM6 feature).
+- Android has no background service for the relay browse handler — the phone is browsable via relay only while its RelayClient-owning screen is alive (same at HEAD).
+- Nothing detects a stale localhost-bound agent on port 19742; the desktop silently reports "connected" against it.
+
+#### 2026-07-08 — Fix: Restore MVVM ownership for cross-network pairing (SUPERSEDED by 2026-07-10 hotfix — this change introduced the dual-RelayClient conflict)
+
+**Root cause**: The PM4 UI refactor added an inline "Share your code" section to ConnectScreen's PairCodeTab that generated its own pair code and QR payload using `DeviceIdentity` directly — bypassing PairViewModel entirely. The pair code was never registered with the relay server (`registerPairCode()` was never called), breaking all cross-network (relay-based) connections.
+
+**Fix**: Restored correct MVVM ownership:
+- `PairCodeTab` now receives `PairViewModel` and calls `pairViewModel.init(context)` via `LaunchedEffect`
+- `pairState.pairCodeFormatted` and `pairState.qrPayload` sourced from PairViewModel (which creates RelayClient, connects, and calls `registerPairCode()`)
+- Removed independent `DeviceIdentity`, `DeviceStore`, `StorageServer`, `getLocalIpAddress()` from ConnectScreen
+- UI layout unchanged: "Enter a code" (top) + OR divider + "Share your code" (bottom) with QR + pair code + copy button
+- Added loading spinner while PairViewModel initializes relay connection
+
+**Files changed**:
+- `apps/mobile/android/.../ui/connect/ConnectScreen.kt`: PairCodeTab delegates to PairViewModel; removed 6 unused imports and `getLocalIpAddress()` function
+
+**Build verification**: `gradlew assembleDebug` BUILD SUCCESSFUL
+
+#### 2026-07-07 — PM4: Native Adaptive UI/UX (Desktop + Android)
+
+**Goal**: Native look and feel on every platform. UI-only: no networking, pairing, filesystem, relay, or transfer engine changes.
+
+- **Desktop — Windows 11 Fluent Design tokens** (`apps/desktop/src/styles/index.css`):
+  - Font: Inter → "Segoe UI Variable" with system fallback stack
+  - Neutral gray palette: #fafafa surface, #005fb8 accent, #1a1a1a text (light); #202020 surface, #60cdff accent, #f5f5f5 text (dark)
+  - New surface tokens: surface-card, surface-flyout, surface-dialog, surface-input, surface-smoke
+  - Fluent motion: decelerate cubic-bezier(0,0,0,1), 83ms/167ms/250ms durations
+  - Elevation shadows: shadow-card, shadow-flyout, shadow-dialog
+  - Fluent utility classes, custom scrollbar, ::selection, :focus-visible ring
+
+- **Desktop — 12 component styles, 3 layout components, 3 pages** updated for Fluent Design
+  - Sidebar: Fluent NavigationView (48/220px), pill indicator, aria-labels
+  - TopNav: Fluent command bar, 167ms transitions
+  - StatusBar: Compact 22px, 5px status dots
+  - Devices: shadow-card, border-card, rounded-[8px], dialog with shadow-dialog
+  - PairDeviceDialog: Fluent dialog, segmented tab control
+  - Explorer: Fluent toolbar, context menu (surface-flyout, shadow-flyout), breadcrumbs
+
+- **Android — Material 3 theme**: Custom Typography (15 styles), Shapes (4dp–28dp), full color palette
+
+- **Android — Tablet adaptive layouts**:
+  - `material3-window-size-class` dependency added
+  - WindowSizeClass detection via CompositionLocal
+  - NavigationRail for medium/expanded width (Files, Transfers, Devices, Settings)
+  - BrowserScreen hides TopAppBar nav when rail visible; adaptive grid sizes
+  - ConnectScreen centered 420dp max width on tablets
+
+- **Build verification**: Desktop `tsc --noEmit` clean, Android `assembleDebug` BUILD SUCCESSFUL
+
 ### Infrastructure — Public Relay Integration (Render)
 
 #### 2026-07-07 — Public Relay Integration

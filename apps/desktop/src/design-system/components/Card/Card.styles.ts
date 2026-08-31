@@ -1,18 +1,18 @@
 import type { CardVariant } from "./Card.types";
 
-const base = "rounded-lg transition-colors duration-200";
+const base = "rounded-[8px] transition-all duration-[167ms] [transition-timing-function:cubic-bezier(0,0,0,1)]";
 
 const variants: Record<CardVariant, string> = {
-  default: "bg-surface-secondary border border-border",
+  default: "bg-surface-card border border-border-card",
   outlined: "bg-transparent border border-border",
-  elevated: "bg-surface-secondary shadow-md",
+  elevated: "bg-surface-card shadow-[var(--shadow-card)]",
 };
 
 const paddings = {
   none: "",
   sm: "p-3",
   md: "p-4",
-  lg: "p-6",
+  lg: "p-5",
 } as const;
 
 export function getCardClasses(

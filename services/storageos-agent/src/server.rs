@@ -400,7 +400,7 @@ async fn pair_approve(
         device_type: peer.device_kind.clone(),
         platform: peer.platform.clone(),
         version: peer.version.clone(),
-        address: String::new(),
+        address: peer.address.clone(),
         last_seen: now,
         paired_at: now,
         status: "online".to_string(),
@@ -924,8 +924,37 @@ async fn file_metadata(
     Ok(Json(crate::dto::DirectoryEntryDto::from(entry)))
 }
 
+/// Parse an HTTP `Range: bytes=...` header value against a file length.
+/// Returns the inclusive (start, end) byte offsets, or None if unsatisfiable.
+fn parse_byte_range(value: &str, file_len: u64) -> Option<(u64, u64)> {
+    if file_len == 0 {
+        return None;
+    }
+    let spec = value.strip_prefix("bytes=")?.split(',').next()?.trim();
+    let (start_s, end_s) = spec.split_once('-')?;
+    if start_s.is_empty() {
+        // Suffix range: last N bytes
+        let n: u64 = end_s.parse().ok()?;
+        if n == 0 {
+            return None;
+        }
+        return Some((file_len.saturating_sub(n), file_len - 1));
+    }
+    let start: u64 = start_s.parse().ok()?;
+    let end: u64 = if end_s.is_empty() {
+        file_len - 1
+    } else {
+        end_s.parse::<u64>().ok()?.min(file_len - 1)
+    };
+    if start > end || start >= file_len {
+        return None;
+    }
+    Some((start, end))
+}
+
 async fn download(
     Query(params): Query<FileParams>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Response, (StatusCode, Json<crate::dto::ErrorDto>)> {
     tracing::debug!(path = %params.path, "Download requested");
 
@@ -945,7 +974,7 @@ async fn download(
     })?
     .map_err(core_error_to_response)?;
 
-    let file = tokio::fs::File::open(&canonical).await.map_err(|e| {
+    let mut file = tokio::fs::File::open(&canonical).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::dto::ErrorDto {
@@ -962,6 +991,44 @@ async fn download(
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
+    // Range request: stream only the requested byte window (media seek support).
+    if let Some(range_value) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
+        match parse_byte_range(range_value, file_len) {
+            Some((start, end)) => {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                file.seek(std::io::SeekFrom::Start(start)).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(crate::dto::ErrorDto {
+                            code: "IO_ERROR".to_string(),
+                            message: format!("Failed to seek file: {e}"),
+                        }),
+                    )
+                })?;
+                let len = end - start + 1;
+                let stream = ReaderStream::new(file.take(len));
+                let body = Body::from_stream(stream);
+                let response = Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, mime)
+                    .header(header::CONTENT_LENGTH, len)
+                    .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{file_len}"))
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .body(body)
+                    .unwrap();
+                return Ok(response);
+            }
+            None => {
+                let response = Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{file_len}"))
+                    .body(Body::empty())
+                    .unwrap();
+                return Ok(response);
+            }
+        }
+    }
+
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
@@ -969,6 +1036,7 @@ async fn download(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, file_len)
+        .header(header::ACCEPT_RANGES, "bytes")
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{file_name}\""),

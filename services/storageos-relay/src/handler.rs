@@ -98,17 +98,21 @@ pub async fn handle_connection(
         transport: "relay".to_string(),
         connected_at: now_epoch(),
         last_seen: now_epoch(),
+        session_id: 0, // assigned by register()
         sender: outbound_tx,
     };
 
-    if let Err(e) = registry.register(device).await {
-        tracing::warn!(
-            device_id = %device_id,
-            error = %e,
-            "Registration failed"
-        );
-        return;
-    }
+    let session_id = match registry.register(device).await {
+        Ok(sid) => sid,
+        Err(e) => {
+            tracing::warn!(
+                device_id = %device_id,
+                error = %e,
+                "Registration failed"
+            );
+            return;
+        }
+    };
 
     tracing::info!(
         device_id = %device_id,
@@ -127,7 +131,7 @@ pub async fn handle_connection(
     )
     .await;
 
-    registry.unregister(&device_id, &disconnect_reason).await;
+    registry.unregister(&device_id, session_id, &disconnect_reason).await;
 }
 
 async fn run_session(

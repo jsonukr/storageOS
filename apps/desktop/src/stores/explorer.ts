@@ -15,9 +15,23 @@ const HIDDEN_ITEMS_KEY = "storageos:showHiddenItems";
 const FILE_EXT_KEY = "storageos:showFileExtensions";
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogv", "mkv", "mov", "avi", "wmv", "flv", "m4v", "mpg", "mpeg", "3gp"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "m4a", "ogg", "oga", "opus", "wma", "aiff"]);
 
 function isImageFile(entry: DirectoryEntry): boolean {
   return !entry.is_directory && IMAGE_EXTENSIONS.has((entry.extension ?? "").toLowerCase());
+}
+
+function isVideoFile(entry: DirectoryEntry): boolean {
+  return !entry.is_directory && VIDEO_EXTENSIONS.has((entry.extension ?? "").toLowerCase());
+}
+
+function isAudioFile(entry: DirectoryEntry): boolean {
+  return !entry.is_directory && AUDIO_EXTENSIONS.has((entry.extension ?? "").toLowerCase());
+}
+
+function isMediaFile(entry: DirectoryEntry): boolean {
+  return isVideoFile(entry) || isAudioFile(entry);
 }
 
 const initialSortConfig = ExplorerSortService.loadConfig();
@@ -147,6 +161,16 @@ interface ExplorerState {
   closeImagePreview: () => void;
   previewNext: () => void;
   previewPrev: () => void;
+
+  mediaItems: DirectoryEntry[];
+  mediaIndex: number;
+  openMediaPreview: (entry: DirectoryEntry) => void;
+  closeMediaPreview: () => void;
+  mediaNext: () => void;
+  mediaPrev: () => void;
+
+  fileTypeFilter: string;
+  setFileTypeFilter: (filter: string) => void;
 }
 
 let searchGeneration = 0;
@@ -250,6 +274,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     if (!entry.is_directory) {
       if (isImageFile(entry)) {
         get().openImagePreview(entry);
+      } else if (isMediaFile(entry)) {
+        get().openMediaPreview(entry);
       }
       return;
     }
@@ -750,6 +776,36 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       set({ previewIndex: previewIndex - 1 });
     }
   },
+
+  mediaItems: [],
+  mediaIndex: -1,
+  openMediaPreview: (entry: DirectoryEntry) => {
+    const { entries, searchResults } = get();
+    const list = searchResults ?? entries;
+    const media = list.filter(isMediaFile);
+    const index = media.findIndex((e) => e.full_path === entry.full_path);
+    if (index >= 0) {
+      set({ mediaItems: media, mediaIndex: index });
+    }
+  },
+  closeMediaPreview: () => {
+    set({ mediaItems: [], mediaIndex: -1 });
+  },
+  mediaNext: () => {
+    const { mediaIndex, mediaItems } = get();
+    if (mediaIndex < mediaItems.length - 1) {
+      set({ mediaIndex: mediaIndex + 1 });
+    }
+  },
+  mediaPrev: () => {
+    const { mediaIndex } = get();
+    if (mediaIndex > 0) {
+      set({ mediaIndex: mediaIndex - 1 });
+    }
+  },
+
+  fileTypeFilter: "all",
+  setFileTypeFilter: (filter: string) => set({ fileTypeFilter: filter }),
 }));
 
 onBridgeEvent("search:progress", (payload) => {
@@ -867,4 +923,4 @@ if ((window as any).__storageos_keydown) {
 };
 document.addEventListener("keydown", (window as any).__storageos_keydown);
 
-export { getParentPath, isImageFile };
+export { getParentPath, isImageFile, isVideoFile, isAudioFile, isMediaFile };
