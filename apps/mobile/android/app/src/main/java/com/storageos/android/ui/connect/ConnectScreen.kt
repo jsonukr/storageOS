@@ -52,6 +52,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -63,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -71,8 +73,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeCallback
+import com.journeyapps.barcodescanner.BarcodeResult
+import com.journeyapps.barcodescanner.DecoratedBarcodeView
+import com.journeyapps.barcodescanner.DefaultDecoderFactory
 import com.storageos.android.api.AgentApi
 import com.storageos.android.data.SavedDevice
 import com.storageos.android.ui.adaptive.LocalWindowSizeClass
@@ -94,22 +99,25 @@ fun ConnectScreen(
     val context = LocalContext.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
-    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        result.contents?.let { viewModel.onQrScanned(it, onConnected) }
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED
+        )
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) scanLauncher.launch(scanOptions())
+        hasCameraPermission = granted
     }
 
-    fun launchScanner() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED
-        ) scanLauncher.launch(scanOptions())
-        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    fun requestCameraPermission() {
+        if (hasCameraPermission) return
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
+
+    val onQrScanned: (String) -> Unit = { viewModel.onQrScanned(it, onConnected) }
 
     var deviceToRename by remember { mutableStateOf<SavedDevice?>(null) }
     var deviceToRemove by remember { mutableStateOf<SavedDevice?>(null) }
@@ -182,7 +190,9 @@ fun ConnectScreen(
                     selectedTab = selectedTab,
                     onTabSelected = { selectedTab = it },
                     onConnected = onConnected,
-                    onScanQr = { launchScanner() },
+                    hasCameraPermission = hasCameraPermission,
+                    onRequestCameraPermission = { requestCameraPermission() },
+                    onQrScanned = onQrScanned,
                     onSharePairing = onSharePairing,
                     onRenameDevice = { device ->
                         renameText = device.name
@@ -215,7 +225,12 @@ fun ConnectScreen(
                     Spacer(Modifier.height(20.dp))
 
                     when (selectedTab) {
-                        0 -> QrCodeTab(state = state, onScanQr = { launchScanner() })
+                        0 -> QrCodeTab(
+                            state = state,
+                            hasCameraPermission = hasCameraPermission,
+                            onRequestCameraPermission = { requestCameraPermission() },
+                            onQrScanned = onQrScanned,
+                        )
                         1 -> PairCodeTab(state = state, viewModel = viewModel, onConnected = onConnected, onSharePairing = onSharePairing)
                         2 -> ManualAddressTab(state = state, viewModel = viewModel, onConnected = onConnected)
                     }
@@ -286,7 +301,9 @@ private fun PhoneConnectContent(
     selectedTab: Int,
     onTabSelected: (Int) -> Unit,
     onConnected: (AgentApi) -> Unit,
-    onScanQr: () -> Unit,
+    hasCameraPermission: Boolean,
+    onRequestCameraPermission: () -> Unit,
+    onQrScanned: (String) -> Unit,
     onSharePairing: (() -> Unit)?,
     onRenameDevice: (SavedDevice) -> Unit,
     onRemoveDevice: (SavedDevice) -> Unit,
@@ -301,7 +318,12 @@ private fun PhoneConnectContent(
     Spacer(Modifier.height(20.dp))
 
     when (selectedTab) {
-        0 -> QrCodeTab(state = state, onScanQr = onScanQr)
+        0 -> QrCodeTab(
+            state = state,
+            hasCameraPermission = hasCameraPermission,
+            onRequestCameraPermission = onRequestCameraPermission,
+            onQrScanned = onQrScanned,
+        )
         1 -> PairCodeTab(state = state, viewModel = viewModel, onConnected = onConnected, onSharePairing = onSharePairing)
         2 -> ManualAddressTab(state = state, viewModel = viewModel, onConnected = onConnected)
     }
@@ -404,7 +426,9 @@ private fun TabRow(
 @Composable
 private fun QrCodeTab(
     state: ConnectUiState,
-    onScanQr: () -> Unit,
+    hasCameraPermission: Boolean,
+    onRequestCameraPermission: () -> Unit,
+    onQrScanned: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier.padding(horizontal = 20.dp),
@@ -423,27 +447,113 @@ private fun QrCodeTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(260.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .clickable(enabled = !state.isConnecting, onClick = onScanQr),
+                .clip(RoundedCornerShape(20.dp)),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.primary,
+                if (hasCameraPermission) {
+                    // Live camera preview embedded right here in the card —
+                    // no fullscreen scanner activity.
+                    InlineQrScanner(
+                        // Pause decoding while a connection is in flight so a
+                        // second frame can't kick off another attempt.
+                        enabled = !state.isConnecting,
+                        onScanned = onQrScanned,
+                        modifier = Modifier.fillMaxSize(),
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = "Tap to scan QR code",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (state.isConnecting) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(onClick = onRequestCameraPermission)
+                            .padding(24.dp),
+                    ) {
+                        Spacer(Modifier.weight(1f))
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "Tap to enable the camera",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.weight(1f))
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun InlineQrScanner(
+    enabled: Boolean,
+    onScanned: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    // Debounce so a single QR held in frame (decoded many times per second)
+    // only fires one attempt, while still allowing a retry after an invalid or
+    // failed scan (where the caller never flips `enabled`).
+    val lastScanMs = remember { mutableStateOf(0L) }
+    val barcodeView = remember {
+        DecoratedBarcodeView(context).apply {
+            barcodeView.decoderFactory = DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE))
+            setStatusText("")
+        }
+    }
+
+    DisposableEffect(enabled) {
+        if (enabled) {
+            barcodeView.resume()
+            barcodeView.decodeContinuous(object : BarcodeCallback {
+                override fun barcodeResult(result: BarcodeResult) {
+                    val text = result.text ?: return
+                    val now = System.currentTimeMillis()
+                    if (now - lastScanMs.value < 2500) return
+                    lastScanMs.value = now
+                    onScanned(text)
+                }
+            })
+        } else {
+            barcodeView.pause()
+        }
+        onDispose { barcodeView.pause() }
+    }
+
+    // Release the camera when the app goes to the background and re-open it on
+    // return, so we never hold the camera off-screen or come back to a black
+    // preview.
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME ->
+                    if (enabled) barcodeView.resume()
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE ->
+                    barcodeView.pause()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    AndroidView(factory = { barcodeView }, modifier = modifier)
 }
 
 @Composable
@@ -808,12 +918,6 @@ private fun RemoveDeviceDialog(
         },
     )
 }
-
-private fun scanOptions() = ScanOptions()
-    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-    .setPrompt("Scan QR code from StorageOS Desktop")
-    .setBeepEnabled(false)
-    .setOrientationLocked(true)
 
 private fun deviceIcon(device: SavedDevice) = when {
     device.deviceType.contains("phone", ignoreCase = true) ||

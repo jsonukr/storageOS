@@ -37,10 +37,21 @@ class BrowserViewModel : ViewModel() {
         private set
 
     fun init(agentApi: AgentApi, baseUrl: String = "") {
-        if (api != null) return
+        // Re-initialize whenever a *different* connection is handed in. Using a
+        // plain `if (api != null) return` guard meant that after disconnecting
+        // and reconnecting (or connecting to another device) the browser kept
+        // showing the previous connection's drives and files.
+        if (api === agentApi) return
         api = agentApi
         agentBaseUrl = baseUrl
         loadRoots()
+    }
+
+    /** Drop the active connection and clear all cached content. */
+    fun reset() {
+        api = null
+        agentBaseUrl = ""
+        _state.value = BrowserUiState()
     }
 
     fun loadRoots() {

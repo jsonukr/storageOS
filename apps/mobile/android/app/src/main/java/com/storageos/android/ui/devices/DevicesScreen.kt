@@ -72,6 +72,7 @@ fun DevicesScreen(
     api: AgentApi,
     onBack: () -> Unit,
     onAddDevice: (() -> Unit)? = null,
+    onForgetActiveDevice: (String) -> Unit = {},
     viewModel: DevicesViewModel = viewModel(),
 ) {
     LaunchedEffect(api) { viewModel.init(api) }
@@ -128,9 +129,13 @@ fun DevicesScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        deviceStore.remove(deviceToRemove!!.deviceId)
+                        val removedId = deviceToRemove!!.deviceId
+                        deviceStore.remove(removedId)
                         savedDevices = deviceStore.loadAll()
                         deviceToRemove = null
+                        // If we just forgot the device we're connected to, drop
+                        // the session so its drives/files stop showing.
+                        onForgetActiveDevice(removedId)
                     },
                 ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
             },

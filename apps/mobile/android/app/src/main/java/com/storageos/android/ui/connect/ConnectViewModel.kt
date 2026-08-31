@@ -14,9 +14,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import android.util.Log
@@ -104,8 +109,11 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onPairingCodeChanged(value: String) {
-        val filtered = value.uppercase().filter { it in PAIR_CODE_CHARSET || it == '-' }
-        _state.value = _state.value.copy(pairingCode = filtered, error = null)
+        // Strip everything that isn't a code character, then re-insert dashes
+        // every 4 characters so the field reads XXXX-XXXX-XXXX as the user types.
+        val cleaned = value.uppercase().filter { it in PAIR_CODE_CHARSET }.take(12)
+        val formatted = cleaned.chunked(4).joinToString("-")
+        _state.value = _state.value.copy(pairingCode = formatted, error = null)
     }
 
     fun submitPairingCode(onConnected: (AgentApi) -> Unit) {
@@ -151,7 +159,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                connectViaRelay(lookupResult.deviceId, lookupResult.displayName, onConnected)
+                connectViaRelay(lookupResult.deviceId, lookupResult.displayName, onConnected, pairCode = code)
             } catch (e: Exception) {
                 Log.e(TAG, "Pairing code lookup failed", e)
                 _state.value = _state.value.copy(
@@ -166,6 +174,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         targetDeviceId: String,
         targetName: String,
         onConnected: (AgentApi) -> Unit,
+        pairCode: String? = null,
     ) {
         activeRelay?.disconnect()
         activeRelay = null
@@ -186,6 +195,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
         if (!connected) {
             relay.disconnect()
+            activeRelay = null
             _state.value = _state.value.copy(
                 isConnecting = false,
                 error = "Could not connect to relay server.",
@@ -195,6 +205,28 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
         Log.i(TAG, "Relay connected, creating RelayAgentApi for $targetDeviceId")
         val relayApi = RelayAgentApi(relay, targetDeviceId)
+
+        // The target agent may still be (re)connecting to the relay itself
+        // (e.g. Render cold start). Probe until it actually answers instead of
+        // dropping the user into the browser only for the first load to time out.
+        val reachable = probeRelayTarget(relayApi)
+        if (!reachable) {
+            relay.disconnect()
+            activeRelay = null
+            _state.value = _state.value.copy(
+                isConnecting = false,
+                error = "Device isn't responding via relay. Make sure the desktop app is running, then try again.",
+            )
+            return
+        }
+
+        // Announce ourselves to the target so it shows an approval prompt and
+        // registers this device (parity with the LAN /pair/initiate flow). Done
+        // after the probe so we know our HELLO was processed and the target is
+        // online to receive it.
+        if (!pairCode.isNullOrBlank()) {
+            sendRelayPairInitiate(relay, identity, targetDeviceId, pairCode)
+        }
 
         deviceStore.save(SavedDevice(
             deviceId = targetDeviceId,
@@ -208,6 +240,55 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         )
 
         onConnected(relayApi)
+    }
+
+    private fun sendRelayPairInitiate(
+        relay: RelayClient,
+        identity: DeviceIdentity,
+        targetDeviceId: String,
+        pairCode: String,
+    ) {
+        val code = pairCode.replace("-", "")
+        val payload = buildJsonObject {
+            put("type", "pair_initiate")
+            put("pair_code", code)
+            put("device_id", identity.deviceId)
+            put("display_name", identity.displayName)
+            put("device_kind", "android")
+            put("platform", "Android ${android.os.Build.VERSION.RELEASE}")
+            put("version", "0.1.0")
+            put("public_key", identity.publicKeyBase64)
+            put("fingerprint", identity.fingerprint)
+            put("address", "")
+            putJsonArray("capabilities") { add("browse"); add("transfer") }
+        }
+        relay.sendMessage(targetDeviceId, payload, kind = "request")
+        Log.i(TAG, "Sent pair_initiate via relay to $targetDeviceId")
+    }
+
+    private suspend fun probeRelayTarget(relayApi: RelayAgentApi): Boolean {
+        val deadlineMs = System.currentTimeMillis() + 75_000
+        var attempt = 0
+        while (System.currentTimeMillis() < deadlineMs) {
+            attempt++
+            val reached = try {
+                withTimeout(8_000) { relayApi.roots() }
+                true
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                false
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // genuine coroutine cancellation — don't swallow it
+            } catch (e: Exception) {
+                Log.i(TAG, "Relay target not ready (attempt $attempt): ${e.message}")
+                false
+            }
+            if (reached) {
+                Log.i(TAG, "Relay target reachable after $attempt attempt(s)")
+                return true
+            }
+            withContext(Dispatchers.IO) { Thread.sleep(1500) }
+        }
+        return false
     }
 
     fun onQrScanned(rawValue: String, onConnected: (AgentApi) -> Unit) {
@@ -360,10 +441,10 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     port = hintPort,
                     name = v2.name,
                 ))
-                _state.value = _state.value.copy(
-                    isConnecting = false,
-                    savedDevices = deviceStore.loadAll(),
-                )
+                // Keep the "Connecting…" state until the connection actually
+                // resolves — clearing it here made a Reconnect card appear
+                // mid-connection instead of navigating to the drives.
+                _state.value = _state.value.copy(savedDevices = deviceStore.loadAll())
 
                 if (hintHost.isNotBlank()) {
                     try {
@@ -380,7 +461,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
 
-                connectViaRelay(v2.id, v2.name, onConnected)
+                connectViaRelay(v2.id, v2.name, onConnected, pairCode = v2.code)
             } catch (e: Exception) {
                 Log.e(TAG, "Relay connection failed", e)
                 _state.value = _state.value.copy(
