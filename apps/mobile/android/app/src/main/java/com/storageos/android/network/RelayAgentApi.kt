@@ -293,6 +293,21 @@ class RelayAgentApi(
         return Base64.decode(dataB64, Base64.DEFAULT)
     }
 
+    /** Fetch a (small) JPEG thumbnail for an image over the relay. */
+    suspend fun thumbnailBytes(path: String, maxSize: Int = 256): ByteArray {
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "thumbnail_request")
+            put("request_id", requestId)
+            put("path", path)
+            put("max_size", maxSize)
+        }
+        val response = sendAndWait(payload)
+        val dataB64 = response.payload["data"]?.jsonPrimitive?.contentOrNull
+            ?: throw RuntimeException("No data in thumbnail response")
+        return Base64.decode(dataB64, Base64.DEFAULT)
+    }
+
     override suspend fun pairDevice(request: PairDeviceRequest): PairDeviceResponse {
         throw UnsupportedOperationException("pairDevice not applicable via relay")
     }

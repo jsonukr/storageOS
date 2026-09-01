@@ -432,6 +432,8 @@ fun BrowserScreen(
                             if (isGridView) {
                                 EntryGrid(
                                     entries = (animState.content as BrowserContent.Directory).entries,
+                                    api = api,
+                                    agentBaseUrl = viewModel.agentBaseUrl,
                                     onEntryTap = onTap,
                                     onRename = { renameTarget = it },
                                     onDelete = { deleteTarget = it },
@@ -440,6 +442,8 @@ fun BrowserScreen(
                             } else {
                                 EntryList(
                                     entries = (animState.content as BrowserContent.Directory).entries,
+                                    api = api,
+                                    agentBaseUrl = viewModel.agentBaseUrl,
                                     onEntryTap = onTap,
                                     onRename = { renameTarget = it },
                                     onDelete = { deleteTarget = it },
@@ -749,6 +753,8 @@ private fun DriveRow(drive: DriveInfo, onClick: () -> Unit) {
 @Composable
 private fun EntryList(
     entries: List<DirectoryEntry>,
+    api: AgentApi,
+    agentBaseUrl: String,
     onEntryTap: (DirectoryEntry) -> Unit,
     onRename: (DirectoryEntry) -> Unit,
     onDelete: (DirectoryEntry) -> Unit,
@@ -778,6 +784,8 @@ private fun EntryList(
         items(entries, key = { it.fullPath }) { entry ->
             EntryRow(
                 entry = entry,
+                api = api,
+                agentBaseUrl = agentBaseUrl,
                 onClick = { onEntryTap(entry) },
                 onRename = { onRename(entry) },
                 onDelete = { onDelete(entry) },
@@ -791,6 +799,8 @@ private fun EntryList(
 @Composable
 private fun EntryRow(
     entry: DirectoryEntry,
+    api: AgentApi,
+    agentBaseUrl: String,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -815,13 +825,20 @@ private fun EntryRow(
             color = iconColor.copy(alpha = 0.12f),
             modifier = Modifier.size(40.dp),
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(22.dp),
-                    tint = iconColor,
-                )
+            EntryThumbnail(
+                entry = entry,
+                api = api,
+                agentBaseUrl = agentBaseUrl,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                        tint = iconColor,
+                    )
+                }
             }
         }
         Spacer(Modifier.width(14.dp))
@@ -892,6 +909,8 @@ private fun EntryRow(
 @Composable
 private fun EntryGrid(
     entries: List<DirectoryEntry>,
+    api: AgentApi,
+    agentBaseUrl: String,
     onEntryTap: (DirectoryEntry) -> Unit,
     onRename: (DirectoryEntry) -> Unit,
     onDelete: (DirectoryEntry) -> Unit,
@@ -952,13 +971,20 @@ private fun EntryGrid(
                             color = iconColor.copy(alpha = 0.12f),
                             modifier = Modifier.size(44.dp),
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp),
-                                    tint = iconColor,
-                                )
+                            EntryThumbnail(
+                                entry = entry,
+                                api = api,
+                                agentBaseUrl = agentBaseUrl,
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp),
+                                        tint = iconColor,
+                                    )
+                                }
                             }
                         }
                         Spacer(Modifier.height(8.dp))
