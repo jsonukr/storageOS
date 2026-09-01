@@ -72,6 +72,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/version", get(version))
         .route("/roots", get(roots))
         .route("/directory", get(directory))
+        .route("/search", get(search))
         .route("/file", get(file_metadata))
         .route("/download", get(download))
         .route("/thumbnail", get(thumbnail))
@@ -882,6 +883,37 @@ async fn directory(
     tracing::debug!(path = %params.path, "Directory listing requested");
     let entries = tokio::task::spawn_blocking(move || {
         storageos_core::filesystem::list_directory(&params.path)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(crate::dto::ErrorDto {
+                code: "INTERNAL".to_string(),
+                message: format!("Task join error: {e}"),
+            }),
+        )
+    })?
+    .map_err(core_error_to_response)?;
+    let dtos: Vec<crate::dto::DirectoryEntryDto> = entries.into_iter().map(crate::dto::DirectoryEntryDto::from).collect();
+    Ok(Json(dtos))
+}
+
+#[derive(Deserialize)]
+struct SearchParams {
+    path: String,
+    query: String,
+    #[serde(default)]
+    recursive: bool,
+}
+
+async fn search(
+    Query(params): Query<SearchParams>,
+) -> Result<Json<Vec<crate::dto::DirectoryEntryDto>>, (StatusCode, Json<crate::dto::ErrorDto>)> {
+    tracing::debug!(path = %params.path, query = %params.query, "Search requested");
+    let entries = tokio::task::spawn_blocking(move || {
+        let noop = |_: &storageos_core::models::common::SearchSnapshot| {};
+        storageos_core::search::search_directory(&params.path, &params.query, params.recursive, &noop)
     })
     .await
     .map_err(|e| {

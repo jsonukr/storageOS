@@ -25,6 +25,9 @@ data class BrowserUiState(
     val pathHistory: List<String> = emptyList(),
     val previewImages: List<DirectoryEntry> = emptyList(),
     val previewIndex: Int = -1,
+    val searchActive: Boolean = false,
+    val searchQuery: String = "",
+    val isSearchResults: Boolean = false,
 )
 
 class BrowserViewModel : ViewModel() {
@@ -75,6 +78,47 @@ class BrowserViewModel : ViewModel() {
         }
     }
 
+    fun openSearch() {
+        _state.value = _state.value.copy(searchActive = true)
+    }
+
+    fun onSearchQueryChange(query: String) {
+        _state.value = _state.value.copy(searchQuery = query)
+    }
+
+    fun closeSearch() {
+        val wasResults = _state.value.isSearchResults
+        _state.value = _state.value.copy(searchActive = false, searchQuery = "", isSearchResults = false)
+        if (wasResults) refresh()
+    }
+
+    fun runSearch() {
+        val client = api ?: return
+        val path = _state.value.currentPath ?: return
+        val query = _state.value.searchQuery.trim()
+        if (query.isBlank()) return
+        _state.value = _state.value.copy(isLoading = true, error = null)
+        viewModelScope.launch {
+            try {
+                val results = client.search(path, query, true)
+                val sorted = results.sortedWith(
+                    compareByDescending<DirectoryEntry> { it.isDirectory }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+                )
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    content = BrowserContent.Directory(sorted),
+                    isSearchResults = true,
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    error = "Search failed: ${e.message}",
+                )
+            }
+        }
+    }
+
     fun openDrive(drive: DriveInfo) {
         val path = "${drive.letter}:\\"
         navigateTo(path, pushHistory = false)
@@ -100,6 +144,10 @@ class BrowserViewModel : ViewModel() {
 
     fun goBack(): Boolean {
         val current = _state.value
+        if (current.searchActive || current.isSearchResults) {
+            closeSearch()
+            return true
+        }
         if (current.pathHistory.isEmpty()) {
             if (current.currentPath != null) {
                 loadRoots()
@@ -128,7 +176,10 @@ class BrowserViewModel : ViewModel() {
 
     private fun loadDirectory(path: String, history: List<String>) {
         val client = api ?: return
-        _state.value = _state.value.copy(isLoading = true, error = null, currentPath = path, pathHistory = history)
+        _state.value = _state.value.copy(
+            isLoading = true, error = null, currentPath = path, pathHistory = history,
+            searchActive = false, searchQuery = "", isSearchResults = false,
+        )
         viewModelScope.launch {
             try {
                 val entries = client.directory(path)

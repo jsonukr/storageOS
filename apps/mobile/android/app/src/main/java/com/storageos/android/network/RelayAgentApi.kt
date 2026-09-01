@@ -118,6 +118,22 @@ class RelayAgentApi(
         return parseEntriesFromDomainPayload(p)
     }
 
+    override suspend fun search(path: String, query: String, recursive: Boolean): List<DirectoryEntry> {
+        val requestId = UUID.randomUUID().toString()
+        val payload = buildJsonObject {
+            put("type", "search_request")
+            put("request_id", requestId)
+            put("path", path)
+            put("query", query)
+            put("recursive", recursive)
+        }
+        val response = sendAndWait(payload)
+        val p = response.payload
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        if (dataStr != null) return json.decodeFromString(dataStr)
+        return parseEntriesFromDomainPayload(p)
+    }
+
     override suspend fun mkdir(request: MkdirRequest): OperationResponse {
         val requestId = UUID.randomUUID().toString()
         val payload = buildJsonObject {

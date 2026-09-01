@@ -40,17 +40,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Description
@@ -282,41 +287,68 @@ fun BrowserScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = if (state.currentPath != null)
-                            state.currentPath!!.split("\\").lastOrNull()?.ifEmpty { state.currentPath!! } ?: "My Computer"
-                        else "My Computer",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    if (state.searchActive) {
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = { viewModel.onSearchQueryChange(it) },
+                            placeholder = { Text("Search in this folder") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { viewModel.runSearch() }),
+                        )
+                    } else {
+                        Text(
+                            text = if (state.currentPath != null)
+                                state.currentPath!!.split("\\").lastOrNull()?.ifEmpty { state.currentPath!! } ?: "My Computer"
+                            else "My Computer",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 },
                 navigationIcon = {
-                    if (canGoBack) {
+                    if (state.searchActive) {
+                        IconButton(onClick = { viewModel.closeSearch() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close search")
+                        }
+                    } else if (canGoBack) {
                         IconButton(onClick = { viewModel.goBack() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     }
                 },
                 actions = {
-                    if (state.content is BrowserContent.Directory) {
-                        IconButton(onClick = { isGridView = !isGridView }) {
-                            Icon(
-                                imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                                contentDescription = if (isGridView) "List view" else "Grid view",
-                            )
+                    if (state.searchActive) {
+                        IconButton(onClick = { viewModel.runSearch() }) {
+                            Icon(Icons.Default.Search, contentDescription = "Search")
                         }
-                    }
-                    if (showNavigationActions) {
-                        IconButton(onClick = onOpenTransfers) {
-                            Icon(Icons.Default.SwapVert, contentDescription = "Transfers")
+                    } else {
+                        if (state.currentPath != null) {
+                            IconButton(onClick = { viewModel.openSearch() }) {
+                                Icon(Icons.Default.Search, contentDescription = "Search")
+                            }
                         }
-                        IconButton(onClick = onOpenDevices) {
-                            Icon(Icons.Default.Devices, contentDescription = "Devices")
+                        if (state.content is BrowserContent.Directory) {
+                            IconButton(onClick = { isGridView = !isGridView }) {
+                                Icon(
+                                    imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                                    contentDescription = if (isGridView) "List view" else "Grid view",
+                                )
+                            }
                         }
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        if (showNavigationActions) {
+                            IconButton(onClick = onOpenTransfers) {
+                                Icon(Icons.Default.SwapVert, contentDescription = "Transfers")
+                            }
+                            IconButton(onClick = onOpenDevices) {
+                                Icon(Icons.Default.Devices, contentDescription = "Devices")
+                            }
+                            IconButton(onClick = onOpenSettings) {
+                                Icon(Icons.Default.Settings, contentDescription = "Settings")
+                            }
                         }
                     }
                 },

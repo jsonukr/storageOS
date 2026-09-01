@@ -58,7 +58,10 @@ pub fn list_directory(path: &str) -> CoreResult<Vec<Entry>> {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
 
-        let hidden = is_hidden(&dir_entry);
+        // Reuse the metadata we already fetched instead of a second stat per
+        // entry — that second syscall roughly doubled the cost of listing large
+        // (and network) folders.
+        let hidden = is_hidden_meta(&name, &metadata);
         let readonly = metadata.permissions().readonly();
 
         let extension = if is_directory {
@@ -114,6 +117,19 @@ pub(crate) fn is_hidden(entry: &fs::DirEntry) -> bool {
         .file_name()
         .to_string_lossy()
         .starts_with('.')
+}
+
+/// Hidden check that reuses already-fetched metadata (no extra stat syscall).
+#[cfg(target_os = "windows")]
+fn is_hidden_meta(_name: &str, metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_hidden_meta(name: &str, _metadata: &fs::Metadata) -> bool {
+    name.starts_with('.')
 }
 
 #[cfg(test)]

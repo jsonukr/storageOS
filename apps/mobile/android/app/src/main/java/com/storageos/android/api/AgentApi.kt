@@ -24,6 +24,13 @@ interface AgentApi {
     @GET("/directory")
     suspend fun directory(@Query("path") path: String): List<DirectoryEntry>
 
+    @GET("/search")
+    suspend fun search(
+        @Query("path") path: String,
+        @Query("query") query: String,
+        @Query("recursive") recursive: Boolean,
+    ): List<DirectoryEntry>
+
     @POST("/devices/pair")
     suspend fun pairDevice(@Body request: PairDeviceRequest): PairDeviceResponse
 

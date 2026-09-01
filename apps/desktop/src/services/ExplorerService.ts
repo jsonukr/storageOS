@@ -217,4 +217,14 @@ export const ExplorerService = {
     if (!r.ok) throw new Error("Failed to load remote directory");
     return r.json();
   },
+
+  async remoteSearch(deviceId: string, path: string, query: string, recursive?: boolean): Promise<DirectoryEntry[]> {
+    const r = await remoteFetch({
+      deviceId,
+      path: `/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&recursive=${recursive ? "true" : "false"}`,
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!r.ok) throw new Error("Failed to search remote directory");
+    return r.json();
+  },
 };

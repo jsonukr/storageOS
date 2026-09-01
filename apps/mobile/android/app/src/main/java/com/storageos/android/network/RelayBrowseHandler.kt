@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -44,6 +45,7 @@ class RelayBrowseHandler(
         when (payloadType) {
             "roots_request" -> handleRootsRequest(source, originalRequestId)
             "directory_request" -> handleDirectoryRequest(source, originalRequestId, msg.payload)
+            "search_request" -> handleSearchRequest(source, originalRequestId, msg.payload)
             "health_request" -> handleHealthRequest(source, originalRequestId)
             "mkdir_request", "create_folder_request" -> handleMkdirRequest(source, originalRequestId, msg.payload)
             "rename_request" -> handleRenameRequest(source, originalRequestId, msg.payload)
@@ -97,24 +99,71 @@ class RelayBrowseHandler(
         val entries = (dir.listFiles() ?: emptyArray())
             .filter { !it.name.startsWith(".") }
             .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
-            .map { file ->
-                buildJsonObject {
-                    put("name", file.name)
-                    put("full_path", file.absolutePath)
-                    put("is_directory", file.isDirectory)
-                    put("size", if (file.isFile) file.length() else 0L)
-                    put("last_modified", file.lastModified() / 1000)
-                    put("date_created", file.lastModified() / 1000)
-                    put("hidden", file.isHidden)
-                    put("readonly", !file.canWrite())
-                    put("extension", if (file.isFile) file.extension else "")
-                }
-            }
+            .map { fileToEntryJson(it) }
 
         val payload = buildJsonObject {
             put("type", "directory_response")
             put("request_id", requestId)
             put("data", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), entries))
+        }
+        sendResponse(destination, requestId, payload)
+    }
+
+    private fun fileToEntryJson(file: File): JsonObject = buildJsonObject {
+        put("name", file.name)
+        put("full_path", file.absolutePath)
+        put("is_directory", file.isDirectory)
+        put("size", if (file.isFile) file.length() else 0L)
+        put("last_modified", file.lastModified() / 1000)
+        put("date_created", file.lastModified() / 1000)
+        put("hidden", file.isHidden)
+        put("readonly", !file.canWrite())
+        put("extension", if (file.isFile) file.extension else "")
+    }
+
+    private fun handleSearchRequest(destination: String, requestId: String, reqPayload: JsonObject) {
+        val path = reqPayload["path"]?.jsonPrimitive?.content ?: ""
+        val query = reqPayload["query"]?.jsonPrimitive?.content?.trim() ?: ""
+        val recursive = reqPayload["recursive"]?.jsonPrimitive?.booleanOrNull ?: true
+        if (path.isBlank() || query.isBlank()) {
+            sendErrorResponse(destination, requestId, "Missing path or query")
+            return
+        }
+
+        val root = File(resolvePath(path))
+        if (!root.exists() || !root.isDirectory) {
+            sendErrorResponse(destination, requestId, "Directory not found: $path")
+            return
+        }
+
+        val needle = query.lowercase()
+        val matches = mutableListOf<JsonObject>()
+        val queue = ArrayDeque<File>()
+        queue.add(root)
+        val limit = 1000
+        // Breadth-first walk, bounded so a huge tree can't hang the connection.
+        while (queue.isNotEmpty() && matches.size < limit) {
+            val dir = queue.removeFirst()
+            val children = dir.listFiles() ?: continue
+            for (file in children) {
+                if (file.name.startsWith(".")) continue
+                if (file.name.lowercase().contains(needle)) {
+                    matches.add(fileToEntryJson(file))
+                    if (matches.size >= limit) break
+                }
+                if (recursive && file.isDirectory) queue.add(file)
+            }
+        }
+
+        val sorted = matches.sortedWith(
+            compareByDescending<JsonObject> { it["is_directory"]?.jsonPrimitive?.booleanOrNull ?: false }
+                .thenBy { it["name"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "" }
+        )
+
+        val payload = buildJsonObject {
+            put("type", "search_response")
+            put("request_id", requestId)
+            put("data", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), sorted))
         }
         sendResponse(destination, requestId, payload)
     }

@@ -470,7 +470,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     const gen = ++searchGeneration;
     searchStartTime = performance.now();
     set({ searchQuery: query, searchLoading: true, searchError: null, searchProgress: null, searchDurationMs: null });
-    ExplorerService.searchDirectory(currentPath, query.trim(), searchRecursive)
+    const remote = get().remoteDevice;
+    const searchPromise = remote
+      ? ExplorerService.remoteSearch(remote.deviceId, currentPath, query.trim(), searchRecursive)
+      : ExplorerService.searchDirectory(currentPath, query.trim(), searchRecursive);
+    searchPromise
       .then((results) => {
         if (gen !== searchGeneration) return;
         const duration = performance.now() - searchStartTime;
