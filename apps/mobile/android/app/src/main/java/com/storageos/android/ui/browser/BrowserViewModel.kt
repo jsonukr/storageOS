@@ -27,6 +27,7 @@ data class BrowserUiState(
     val pathHistory: List<String> = emptyList(),
     val previewImages: List<DirectoryEntry> = emptyList(),
     val previewIndex: Int = -1,
+    val videoEntry: DirectoryEntry? = null,
     val searchActive: Boolean = false,
     val searchQuery: String = "",
     val isSearchResults: Boolean = false,
@@ -83,7 +84,7 @@ class BrowserViewModel : ViewModel() {
         val client = api ?: return
         val s = _state.value
         val path = s.currentPath ?: return
-        if (s.isLoading || s.searchActive || s.isSearchResults || s.previewIndex >= 0) return
+        if (s.isLoading || s.searchActive || s.isSearchResults || s.previewIndex >= 0 || s.videoEntry != null) return
         val current = (s.content as? BrowserContent.Directory)?.entries ?: return
         if (current.size > 800) return // don't re-list very large folders every few seconds
         try {
@@ -259,6 +260,15 @@ class BrowserViewModel : ViewModel() {
 
     fun closePreview() {
         _state.value = _state.value.copy(previewImages = emptyList(), previewIndex = -1)
+    }
+
+    fun openVideo(entry: DirectoryEntry) {
+        if (entry.isDirectory) return
+        _state.value = _state.value.copy(videoEntry = entry)
+    }
+
+    fun closeVideo() {
+        _state.value = _state.value.copy(videoEntry = null)
     }
 
     private fun DirectoryEntry.isImage(): Boolean =

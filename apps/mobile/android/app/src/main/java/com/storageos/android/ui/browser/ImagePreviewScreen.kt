@@ -55,9 +55,15 @@ import java.net.URLEncoder
 import java.nio.ByteBuffer
 
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
+private val VIDEO_EXTENSIONS = setOf(
+    "mp4", "webm", "mkv", "mov", "avi", "wmv", "flv", "m4v", "3gp", "mpg", "mpeg", "ts",
+)
 
 fun DirectoryEntry.isImage(): Boolean =
     !isDirectory && extension.lowercase() in IMAGE_EXTENSIONS
+
+fun DirectoryEntry.isVideo(): Boolean =
+    !isDirectory && extension.lowercase() in VIDEO_EXTENSIONS
 
 @Composable
 fun ImagePreviewScreen(

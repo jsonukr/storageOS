@@ -223,6 +223,17 @@ fun BrowserScreen(
         return
     }
 
+    if (state.videoEntry != null) {
+        androidx.activity.compose.BackHandler { viewModel.closeVideo() }
+        VideoPlayerScreen(
+            entry = state.videoEntry!!,
+            api = api,
+            agentBaseUrl = viewModel.agentBaseUrl,
+            onClose = { viewModel.closeVideo() },
+        )
+        return
+    }
+
     if (showNewFolderDialog) {
         NewFolderDialog(
             onDismiss = { showNewFolderDialog = false },
@@ -412,8 +423,11 @@ fun BrowserScreen(
                         )
                         animState.content is BrowserContent.Directory -> {
                             val onTap = { entry: DirectoryEntry ->
-                                if (entry.isImage()) viewModel.openImage(entry)
-                                else viewModel.openEntry(entry)
+                                when {
+                                    entry.isImage() -> viewModel.openImage(entry)
+                                    entry.isVideo() -> viewModel.openVideo(entry)
+                                    else -> viewModel.openEntry(entry)
+                                }
                             }
                             if (isGridView) {
                                 EntryGrid(
