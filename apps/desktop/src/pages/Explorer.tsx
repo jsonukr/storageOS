@@ -71,6 +71,62 @@ async function loadRemoteImage(deviceId: string, fullPath: string): Promise<stri
   }
 }
 
+// Grab a poster frame from a video by decoding it in a hidden <video> and
+// drawing to a canvas. The agent serves /download with CORS "*", so with
+// crossOrigin="anonymous" the canvas isn't tainted; if it is (or anything
+// fails) we resolve null and fall back to the play-icon placeholder.
+const videoFrameCache = new Map<string, string>();
+
+async function loadVideoFrame(url: string, cacheKey: string): Promise<string | null> {
+  const cached = videoFrameCache.get(cacheKey);
+  if (cached) return cached;
+  await thumbAcquire();
+  try {
+    const dataUrl = await new Promise<string | null>((resolve) => {
+      const video = document.createElement("video");
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.preload = "metadata";
+      let settled = false;
+      const finish = (v: string | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { video.removeAttribute("src"); video.load(); } catch { /* noop */ }
+        resolve(v);
+      };
+      const timer = setTimeout(() => finish(null), 12000);
+      video.onloadeddata = () => {
+        const d = video.duration;
+        video.currentTime = isFinite(d) && d > 0 ? Math.min(1, d / 2) : 0;
+      };
+      video.onseeked = () => {
+        try {
+          const w = video.videoWidth;
+          const h = video.videoHeight;
+          if (!w || !h) { finish(null); return; }
+          const scale = Math.min(1, 240 / Math.max(w, h));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(w * scale));
+          canvas.height = Math.max(1, Math.round(h * scale));
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { finish(null); return; }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish(canvas.toDataURL("image/jpeg", 0.7));
+        } catch {
+          finish(null); // tainted canvas / draw failure
+        }
+      };
+      video.onerror = () => finish(null);
+      video.src = url;
+    });
+    if (dataUrl) videoFrameCache.set(cacheKey, dataUrl);
+    return dataUrl;
+  } finally {
+    thumbRelease();
+  }
+}
+
 // ── File type detection ──
 
 const IMAGE_EXTS = new Set(["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff","tif","avif","jfif"]);
@@ -890,18 +946,43 @@ function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: num
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (entry.is_directory || getFileCategory(entry.extension) !== "image" || size < 32) return;
-    const hasCached = remoteKey ? remoteImgCache.has(remoteKey) : thumbCache.has(entry.full_path);
-    if (hasCached) { setSrc((remoteKey ? remoteImgCache.get(remoteKey) : thumbCache.get(entry.full_path))!); return; }
+    if (entry.is_directory) return;
+    const category = getFileCategory(entry.extension);
+    const wantImage = category === "image" && size >= 32;
+    // Skip video frames over relay — there's no streaming endpoint, so it would
+    // pull the whole file just for a thumbnail.
+    const isRelay = remoteDevice != null &&
+      ConnectionManager.getActiveTransport(remoteDevice.deviceId) === "relay";
+    const wantVideo = category === "video" && size >= 48 && !isRelay;
+    if (!wantImage && !wantVideo) return;
+
+    if (wantImage) {
+      const cached = remoteKey ? remoteImgCache.get(remoteKey) : thumbCache.get(entry.full_path);
+      if (cached) { setSrc(cached); return; }
+    } else {
+      const cached = videoFrameCache.get(`video:${remoteKey ?? entry.full_path}`);
+      if (cached) { setSrc(cached); return; }
+    }
+
     const observer = new IntersectionObserver(
       ([e]) => {
         if (!e.isIntersecting) return;
         observer.disconnect();
-        const load = remoteDevice
-          ? loadRemoteImage(remoteDevice.deviceId, entry.full_path)
-          : loadThumb(entry.full_path, size);
+        let load: Promise<string | null>;
+        if (wantImage) {
+          load = remoteDevice
+            ? loadRemoteImage(remoteDevice.deviceId, entry.full_path)
+            : loadThumb(entry.full_path, size);
+        } else {
+          const url = remoteDevice
+            ? (buildRemoteUrl(remoteDevice.deviceId, `/download?path=${encodeURIComponent(entry.full_path)}`) ?? "")
+            : convertFileSrc(entry.full_path);
+          load = url ? loadVideoFrame(url, `video:${remoteKey ?? entry.full_path}`) : Promise.resolve(null);
+        }
         load.then(url => {
-          if (!cancelled.current) { if (url) setSrc(url); else setLoadError(true); }
+          if (cancelled.current) return;
+          if (url) setSrc(url);
+          else if (wantImage) setLoadError(true); // videos keep the play-icon placeholder
         });
       },
       { rootMargin: "100px" },
@@ -943,14 +1024,19 @@ function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: num
     const color = FILE_COLORS.video;
     return (
       <div
+        ref={ref}
         className="rounded overflow-hidden bg-surface-secondary flex items-center justify-center relative"
-        style={{ width: size, height: size }}
+        style={{ width: size, height: size, contain: "strict" }}
       >
-        <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 32 32" fill="none">
-          <rect x="2" y="6" width="28" height="20" rx="2" fill={color} opacity="0.2" stroke={color} strokeWidth="1" />
-          <path d="M13 11v10l8-5-8-5z" fill={color} opacity="0.7" />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
+        {src ? (
+          <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />
+        ) : (
+          <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 32 32" fill="none">
+            <rect x="2" y="6" width="28" height="20" rx="2" fill={color} opacity="0.2" stroke={color} strokeWidth="1" />
+            <path d="M13 11v10l8-5-8-5z" fill={color} opacity="0.7" />
+          </svg>
+        )}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div
             className="rounded-full bg-black/50 flex items-center justify-center"
             style={{ width: size * 0.3, height: size * 0.3 }}
