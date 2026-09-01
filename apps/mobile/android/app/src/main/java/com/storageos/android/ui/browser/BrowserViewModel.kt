@@ -7,6 +7,8 @@ import com.storageos.android.api.DirectoryEntry
 import com.storageos.android.api.DriveInfo
 import com.storageos.android.api.MkdirRequest
 import com.storageos.android.api.RenameRequest
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +38,7 @@ class BrowserViewModel : ViewModel() {
     val state: StateFlow<BrowserUiState> = _state.asStateFlow()
 
     private var api: AgentApi? = null
+    private var pollJob: Job? = null
     var agentBaseUrl: String = ""
         private set
 
@@ -48,13 +51,57 @@ class BrowserViewModel : ViewModel() {
         api = agentApi
         agentBaseUrl = baseUrl
         loadRoots()
+        startAutoRefresh()
     }
 
     /** Drop the active connection and clear all cached content. */
     fun reset() {
+        pollJob?.cancel()
+        pollJob = null
         api = null
         agentBaseUrl = ""
         _state.value = BrowserUiState()
+    }
+
+    /**
+     * Poll the current directory in the background so changes made on the other
+     * device (or by another app) show up without a manual reload. Silent: it
+     * never toggles the loading state and only swaps content when it actually
+     * changed, so it won't flicker or fight the user.
+     */
+    private fun startAutoRefresh() {
+        pollJob?.cancel()
+        pollJob = viewModelScope.launch {
+            while (true) {
+                delay(5_000)
+                silentRefresh()
+            }
+        }
+    }
+
+    private suspend fun silentRefresh() {
+        val client = api ?: return
+        val s = _state.value
+        val path = s.currentPath ?: return
+        if (s.isLoading || s.searchActive || s.isSearchResults || s.previewIndex >= 0) return
+        val current = (s.content as? BrowserContent.Directory)?.entries ?: return
+        if (current.size > 800) return // don't re-list very large folders every few seconds
+        try {
+            val entries = client.directory(path)
+            if (_state.value.currentPath != path) return // navigated away mid-fetch
+            val sorted = entries.sortedWith(
+                compareByDescending<DirectoryEntry> { it.isDirectory }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+            )
+            val stillCurrent = (_state.value.content as? BrowserContent.Directory)?.entries
+            if (stillCurrent != null && sorted != stillCurrent &&
+                !_state.value.isSearchResults && _state.value.previewIndex < 0
+            ) {
+                _state.value = _state.value.copy(content = BrowserContent.Directory(sorted))
+            }
+        } catch (_: Exception) {
+            // transient failure — try again next tick
+        }
     }
 
     fun loadRoots() {

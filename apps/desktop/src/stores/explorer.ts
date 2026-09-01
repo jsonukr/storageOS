@@ -76,6 +76,7 @@ interface ExplorerState {
   goForward: () => void;
   goUp: () => void;
   refresh: () => void;
+  silentRefresh: () => void;
 
   operationLoading: boolean;
   operationError: string | null;
@@ -179,6 +180,23 @@ let searchStartTime = 0;
 function getSortConfig(): SortConfig {
   const s = useExplorerStore.getState();
   return { field: s.sortField, direction: s.sortDirection, foldersFirst: s.foldersFirst };
+}
+
+function entriesEqual(a: DirectoryEntry[], b: DirectoryEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.full_path !== y.full_path ||
+      x.size !== y.size ||
+      x.last_modified !== y.last_modified ||
+      x.is_directory !== y.is_directory
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function loadDirectory(path: string, set: (partial: Partial<ExplorerState>) => void) {
@@ -355,6 +373,33 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     const { currentPath } = get();
     if (currentPath === null) return;
     loadDirectory(currentPath, set);
+  },
+
+  // Background re-fetch of the current folder so changes made elsewhere (other
+  // device / another app) appear without a manual reload. Never toggles the
+  // loading spinner and only swaps entries when they actually changed.
+  silentRefresh: () => {
+    const s = get();
+    const path = s.currentPath;
+    if (!path) return;
+    if (s.loading || s.searchQuery || s.searchResults) return;
+    if (s.entries.length > 800) return; // don't re-list very large folders repeatedly
+    const remote = s.remoteDevice;
+    const promise = remote
+      ? ExplorerService.listRemoteDirectory(remote.deviceId, path)
+      : ExplorerService.listDirectory(path);
+    promise
+      .then((fetched) => {
+        const cur = get();
+        if (cur.currentPath !== path || cur.loading || cur.searchResults) return;
+        const sorted = ExplorerSortService.sort(fetched, getSortConfig());
+        if (!entriesEqual(sorted, cur.entries)) {
+          set({ entries: sorted });
+        }
+      })
+      .catch(() => {
+        /* transient — try again next tick */
+      });
   },
 
   operationLoading: false,

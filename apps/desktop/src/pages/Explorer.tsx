@@ -448,6 +448,13 @@ function FileArea({ viewMode }: { viewMode: string }) {
     if (currentPath && areaRef.current) areaRef.current.focus();
   }, [currentPath]);
 
+  // Poll the current folder so changes made on the other device show up
+  // without a manual reload (silentRefresh no-ops when busy/searching/huge).
+  useEffect(() => {
+    const id = setInterval(() => useExplorerStore.getState().silentRefresh(), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   const filterEntries = (items: DirectoryEntry[]) => {
     let filtered = showHidden ? items : items.filter((e) => !e.hidden);
     if (fileTypeFilter !== "all") {
