@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAgentStore } from "@/stores/agent";
+import { PairCodeEntryDialog } from "./PairCodeEntryDialog";
 
 const AGENT_BASE = "http://127.0.0.1:19742";
 
@@ -32,6 +33,7 @@ export function PairDeviceDialog({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<DialogView>("pairing");
   const [pendingRequest, setPendingRequest] = useState<SessionStatus | null>(null);
   const [friendlyName, setFriendlyName] = useState("");
+  const [enteringCode, setEnteringCode] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qrKeyRef = useRef(0);
@@ -160,6 +162,7 @@ export function PairDeviceDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-surface-smoke)]"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -363,10 +366,27 @@ export function PairDeviceDialog({ onClose }: { onClose: () => void }) {
                 <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
                 Waiting for a device to connect…
               </div>
+
+              <div className="mt-4 pt-3 border-t border-border text-center">
+                <button
+                  onClick={() => setEnteringCode(true)}
+                  className="text-[12px] font-medium text-accent hover:underline"
+                >
+                  Have a code from another device? Enter it →
+                </button>
+              </div>
             </>
           )}
         </div>
       </div>
     </div>
+
+    {enteringCode && (
+      <PairCodeEntryDialog
+        onClose={() => setEnteringCode(false)}
+        onPaired={() => setEnteringCode(false)}
+      />
+    )}
+    </>
   );
 }
