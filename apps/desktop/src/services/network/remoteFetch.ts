@@ -97,10 +97,17 @@ async function retryOnFailover(
   const newTransport = ConnectionManager.getActiveTransport(deviceId);
   const newAddress = ConnectionManager.getAddress(deviceId);
 
-  if (!newAddress || newTransport === previousTransport) {
-    debugLog("failover-skip", {
-      reason: !newAddress ? "no-address" : "same-transport",
-    });
+  // No alternative *direct* transport available. Fall back to the relay, which
+  // routes by device id through the local agent — it needs no reachable LAN
+  // endpoint. This is what lets remote browsing work when the peer's LAN
+  // address is unreachable (different network) or simply wrong (VPN / virtual
+  // adapter picked up by the peer's LAN-IP detection).
+  if (!newAddress || newTransport === previousTransport || newTransport === "relay") {
+    if (previousTransport !== "relay") {
+      debugLog("failover", { from: previousTransport ?? "unknown", to: "relay" });
+      return relayFetch(deviceId, path, fetchInit);
+    }
+    debugLog("failover-skip", { reason: "relay-exhausted" });
     throw new Error(`No connection for device ${deviceId}`);
   }
 
