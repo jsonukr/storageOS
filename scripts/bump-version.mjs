@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Bump the StorageOS version everywhere it is recorded, in one shot.
+ * StorageOS version manager — one source of truth: /version.env
  *
- *   node scripts/bump-version.mjs [patch|minor|major]   (default: patch)
+ *   node scripts/bump-version.mjs [patch|minor|major]   bump version.env, then propagate
+ *   node scripts/bump-version.mjs sync                   propagate current version.env as-is
  *
- * Canonical version = apps/desktop/src-tauri/Cargo.toml. Android versionCode
- * is incremented by 1 each bump (Google requires a strictly increasing int).
- * Keep this in sync with .githooks/pre-push, which BLOCKS any push that does
- * not include a version bump here.
+ * `version.env` (VERSION + VERSION_CODE) is the ONLY hand-authored version.
+ * Every native config file below is generated from it — never edit the version
+ * in those directly. On a bump, VERSION_CODE is incremented by 1 (Android
+ * requires a strictly-increasing integer). Keep this in sync with
+ * .githooks/pre-push, which BLOCKS any code push that doesn't bump version.env.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -15,65 +17,77 @@ import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const p = (rel) => join(root, rel);
+const ENV = p("version.env");
 
-const F = {
-  desktopCargo: p("apps/desktop/src-tauri/Cargo.toml"),
-  tauriConf: p("apps/desktop/src-tauri/tauri.conf.json"),
-  desktopPkg: p("apps/desktop/package.json"),
-  androidGradle: p("apps/mobile/android/app/build.gradle.kts"),
-  agentCargo: p("services/storageos-agent/Cargo.toml"),
-  relayManifest: p("services/storageos-relay/version.json"),
-};
-
-const kind = process.argv[2] || "patch";
-
-// Canonical version
-const cargo = readFileSync(F.desktopCargo, "utf8");
-const m = cargo.match(/^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"/m);
-if (!m) {
-  console.error("bump-version: could not read version from apps/desktop/src-tauri/Cargo.toml");
+// ── Read the source of truth ─────────────────────────────────────────────
+const env = readFileSync(ENV, "utf8");
+const vMatch = env.match(/^VERSION\s*=\s*(\d+)\.(\d+)\.(\d+)\s*$/m);
+const cMatch = env.match(/^VERSION_CODE\s*=\s*(\d+)\s*$/m);
+if (!vMatch || !cMatch) {
+  console.error("bump-version: version.env must define VERSION=x.y.z and VERSION_CODE=<int>");
   process.exit(1);
 }
-let [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
-if (kind === "major") { maj++; min = 0; pat = 0; }
-else if (kind === "minor") { min++; pat = 0; }
-else { pat++; }
-const next = `${maj}.${min}.${pat}`;
+let [maj, min, pat] = [Number(vMatch[1]), Number(vMatch[2]), Number(vMatch[3])];
+let code = Number(cMatch[1]);
 
-// Android versionCode = current + 1
-const gradle = readFileSync(F.androidGradle, "utf8");
-const vc = gradle.match(/versionCode\s*=\s*(\d+)/);
-const nextCode = (vc ? Number(vc[1]) : 0) + 1;
+// ── Apply the requested bump (default: patch; `sync` = no bump) ───────────
+const kind = process.argv[2] || "patch";
+if (kind === "sync") {
+  // propagate current values unchanged
+} else if (kind === "major") { maj++; min = 0; pat = 0; code++; }
+else if (kind === "minor") { min++; pat = 0; code++; }
+else if (kind === "patch") { pat++; code++; }
+else {
+  console.error(`bump-version: unknown argument "${kind}" (use patch|minor|major|sync)`);
+  process.exit(1);
+}
+const version = `${maj}.${min}.${pat}`;
 
-// --- write every file ---
-writeFileSync(F.desktopCargo, cargo.replace(/^version\s*=\s*"\d+\.\d+\.\d+"/m, `version = "${next}"`));
-
+// Write version.env back (source of truth first, so propagation always matches).
 writeFileSync(
-  F.tauriConf,
-  readFileSync(F.tauriConf, "utf8").replace(/("version"\s*:\s*)"\d+\.\d+\.\d+"/, `$1"${next}"`),
+  ENV,
+  env.replace(/^VERSION\s*=.*$/m, `VERSION=${version}`).replace(/^VERSION_CODE\s*=.*$/m, `VERSION_CODE=${code}`),
 );
 
-writeFileSync(
-  F.desktopPkg,
-  readFileSync(F.desktopPkg, "utf8").replace(/("version"\s*:\s*)"\d+\.\d+\.\d+"/, `$1"${next}"`),
-);
+// ── Propagate into every native config file ──────────────────────────────
+const edit = (rel, fn) => {
+  const abs = p(rel);
+  const before = readFileSync(abs, "utf8");
+  const after = fn(before);
+  writeFileSync(abs, after);
+};
 
-writeFileSync(
-  F.androidGradle,
-  gradle
-    .replace(/versionCode\s*=\s*\d+/, `versionCode = ${nextCode}`)
-    .replace(/versionName\s*=\s*"\d+\.\d+\.\d+"/, `versionName = "${next}"`),
-);
+// Rust crates (desktop + agent): [package] version
+edit("apps/desktop/src-tauri/Cargo.toml", (s) =>
+  s.replace(/^version\s*=\s*"\d+\.\d+\.\d+"/m, `version = "${version}"`));
+edit("services/storageos-agent/Cargo.toml", (s) =>
+  s.replace(/^version\s*=\s*"\d+\.\d+\.\d+"/m, `version = "${version}"`));
 
-writeFileSync(
-  F.agentCargo,
-  readFileSync(F.agentCargo, "utf8").replace(/^version\s*=\s*"\d+\.\d+\.\d+"/m, `version = "${next}"`),
-);
+// Tauri config + desktop package.json
+edit("apps/desktop/src-tauri/tauri.conf.json", (s) =>
+  s.replace(/("version"\s*:\s*)"\d+\.\d+\.\d+"/, `$1"${version}"`));
+edit("apps/desktop/package.json", (s) =>
+  s.replace(/("version"\s*:\s*)"\d+\.\d+\.\d+"/, `$1"${version}"`));
 
-const manifest = JSON.parse(readFileSync(F.relayManifest, "utf8"));
-if (manifest.windows) manifest.windows.version = next;
-if (manifest.android) { manifest.android.version = next; manifest.android.versionCode = nextCode; }
-writeFileSync(F.relayManifest, JSON.stringify(manifest, null, 2) + "\n");
+// Android: versionName (string) + versionCode (int)
+edit("apps/mobile/android/app/build.gradle.kts", (s) =>
+  s.replace(/versionCode\s*=\s*\d+/, `versionCode = ${code}`)
+   .replace(/versionName\s*=\s*"\d+\.\d+\.\d+"/, `versionName = "${version}"`));
 
-console.log(`bump-version: -> ${next} (Android versionCode ${nextCode}) across ${Object.keys(F).length} files.`);
-console.log("Now: rebuild the apps, commit the bump, and push.");
+// Relay update manifest served at /version
+edit("services/storageos-relay/version.json", (s) => {
+  const m = JSON.parse(s);
+  if (m.windows) m.windows.version = version;
+  if (m.android) { m.android.version = version; m.android.versionCode = code; }
+  return JSON.stringify(m, null, 2) + "\n";
+});
+
+// Download site: static fallback (page also fetches the latest GitHub release live)
+edit("site/index.html", (s) =>
+  s.replace(/(<span id="ver-badge">)[^<]*(<\/span>)/, `$1${version}$2`)
+   .replace(/(<span id="ver-footer">)v?[^<]*(<\/span>)/, `$1v${version}$2`));
+
+console.log(`bump-version: ${kind} -> ${version} (Android versionCode ${code})`);
+console.log("Propagated to: version.env, desktop+agent Cargo.toml, tauri.conf.json,");
+console.log("package.json, build.gradle.kts, relay version.json, site/index.html.");
+if (kind !== "sync") console.log("Now: rebuild the apps, commit the bump, and push.");

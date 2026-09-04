@@ -1,10 +1,17 @@
+import { useEffect, useState } from "react";
 import { useAgentStore } from "@/stores/agent";
+import { version } from "@/lib/tauri";
 import type { AgentConnectionState } from "@/services/agent";
 
 export default function Settings() {
   const agentState = useAgentStore((s) => s.state);
   const agentVersion = useAgentStore((s) => s.agentVersion);
   const agentUptime = useAgentStore((s) => s.agentUptime);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    version().then((v) => setAppVersion(v.app_version)).catch(() => {});
+  }, []);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -51,7 +58,7 @@ export default function Settings() {
         </SettingsGroup>
 
         <SettingsGroup title="About">
-          <SettingsRow label="StorageOS" value="0.1.0" />
+          <SettingsRow label="StorageOS" value={appVersion ? `v${appVersion}` : "…"} />
           <SettingsRow label="Tauri" value="2.x" />
           <SettingsRow label="Platform" value="Windows" />
           <SettingsRow

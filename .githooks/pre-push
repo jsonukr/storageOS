@@ -9,7 +9,7 @@
 #
 
 zero=0000000000000000000000000000000000000000
-VERSION_FILE="apps/desktop/src-tauri/Cargo.toml"
+VERSION_FILE="version.env"
 
 while read local_ref local_sha remote_ref remote_sha; do
   # Skip branch deletions
@@ -26,7 +26,7 @@ while read local_ref local_sha remote_ref remote_sha; do
   if git diff --name-only "$range" 2>/dev/null \
        | grep -vE '^services/storageos-relay/version\.json$' \
        | grep -qE '^(apps/|services/|crates/)'; then
-    if ! git diff "$range" -- "$VERSION_FILE" 2>/dev/null | grep -qE '^\+version = "[0-9]+\.[0-9]+\.[0-9]+"'; then
+    if ! git diff "$range" -- "$VERSION_FILE" 2>/dev/null | grep -qE '^\+VERSION=[0-9]+\.[0-9]+\.[0-9]+'; then
       echo "────────────────────────────────────────────────────────────────────"
       echo " ✗ Push blocked — app/service code changed but no version bump."
       echo ""

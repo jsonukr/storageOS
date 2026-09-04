@@ -1,5 +1,7 @@
 package com.storageos.android.network
 
+import com.storageos.android.BuildConfig
+
 import android.os.Environment
 import android.os.StatFs
 import android.util.Base64
@@ -173,7 +175,7 @@ class RelayBrowseHandler(
     private fun handleHealthRequest(destination: String, requestId: String) {
         val healthJson = buildJsonObject {
             put("status", "ok")
-            put("version", "0.1.0")
+            put("version", BuildConfig.VERSION_NAME)
             put("platform", "Android ${android.os.Build.VERSION.RELEASE}")
             put("device_id", relay.deviceId)
         }

@@ -3,6 +3,7 @@ package com.storageos.android.ui.connect
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.storageos.android.BuildConfig
 import com.storageos.android.api.AgentApi
 import com.storageos.android.api.PairDeviceRequest
 import com.storageos.android.api.PairInitiateV2Request
@@ -256,7 +257,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             put("display_name", identity.displayName)
             put("device_kind", "android")
             put("platform", "Android ${android.os.Build.VERSION.RELEASE}")
-            put("version", "0.1.0")
+            put("version", BuildConfig.VERSION_NAME)
             put("public_key", identity.publicKeyBase64)
             put("fingerprint", identity.fingerprint)
             put("address", "")
@@ -348,7 +349,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                                 displayName = android.os.Build.MODEL,
                                 deviceKind = "android",
                                 platform = "Android ${android.os.Build.VERSION.RELEASE}",
-                                version = "0.1.0",
+                                version = BuildConfig.VERSION_NAME,
                                 address = myAddress,
                             ))
                         } catch (_: Exception) {
@@ -358,7 +359,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                                     systemName = android.os.Build.MODEL,
                                     deviceType = "android",
                                     platform = "Android ${android.os.Build.VERSION.RELEASE}",
-                                    version = "0.1.0",
+                                    version = BuildConfig.VERSION_NAME,
                                     address = myAddress,
                                     pairingToken = v2.code,
                                 ))
@@ -594,7 +595,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                             systemName = android.os.Build.MODEL,
                             deviceType = "android",
                             platform = "Android ${android.os.Build.VERSION.RELEASE}",
-                            version = "0.1.0",
+                            version = BuildConfig.VERSION_NAME,
                             address = myAddress,
                             pairingToken = pairingToken,
                         ))

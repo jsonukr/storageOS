@@ -1,5 +1,7 @@
 package com.storageos.android.server
 
+import com.storageos.android.BuildConfig
+
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
@@ -71,7 +73,7 @@ class StorageServer(
         val body = json.encodeToString(HealthResp(
             status = "ok",
             uptimeSecs = uptime,
-            version = "0.1.0",
+            version = BuildConfig.VERSION_NAME,
             platform = "Android ${Build.VERSION.RELEASE}",
             deviceId = deviceId,
         ))
@@ -85,7 +87,7 @@ class StorageServer(
             systemName = Build.MODEL,
             status = "online",
             address = "",
-            version = "0.1.0",
+            version = BuildConfig.VERSION_NAME,
             platform = "Android ${Build.VERSION.RELEASE}",
             capabilities = "{}",
             uptimeSecs = uptime,

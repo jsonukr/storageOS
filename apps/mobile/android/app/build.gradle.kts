@@ -65,6 +65,9 @@ android {
 
     buildFeatures {
         compose = true
+        // Exposes BuildConfig.VERSION_NAME so the app reports its own version
+        // (sourced from version.env → versionName) instead of a hardcoded string.
+        buildConfig = true
     }
 
     lint {
