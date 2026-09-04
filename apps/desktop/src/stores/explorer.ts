@@ -790,7 +790,21 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
         if (roots.length === 1) {
           loadDirectory(roots[0].letter + ":\\", set);
         } else {
-          set({ loading: false });
+          // Show the remote device's drives so the user can pick one. Present
+          // each drive as a folder entry rooted at "<letter>:\" — opening it
+          // navigates into that drive via loadDirectory (remote-aware).
+          const driveEntries: DirectoryEntry[] = roots.map((d) => ({
+            name: d.label ? `${d.label} (${d.letter}:)` : `${d.letter}:`,
+            full_path: `${d.letter}:\\`,
+            is_directory: true,
+            size: 0,
+            last_modified: 0,
+            date_created: 0,
+            hidden: false,
+            readonly: false,
+            extension: "",
+          }));
+          set({ entries: driveEntries, loading: false });
         }
       })
       .catch((err) => set({ loading: false, error: err instanceof Error ? err.message : String(err) }));

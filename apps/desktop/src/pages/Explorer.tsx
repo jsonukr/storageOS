@@ -487,6 +487,7 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const loading = useExplorerStore((s) => s.loading);
   const error = useExplorerStore((s) => s.error);
   const currentPath = useExplorerStore((s) => s.currentPath);
+  const remoteDevice = useExplorerStore((s) => s.remoteDevice);
   const selectEntry = useExplorerStore((s) => s.selectEntry);
   const showContextMenu = useExplorerStore((s) => s.showContextMenu);
   const hideContextMenu = useExplorerStore((s) => s.hideContextMenu);
@@ -591,7 +592,12 @@ function FileArea({ viewMode }: { viewMode: string }) {
   const renderContent = () => {
     if (loading) return <LoadingState />;
     if (error) return <ErrorState message={error} />;
-    if (currentPath === null) return <WelcomeState />;
+    if (currentPath === null) {
+      // At a remote device's root, `entries` holds its drives — show them so
+      // the user can pick one. Local root shows the "pick a drive" welcome.
+      if (remoteDevice && entries.length > 0) return renderView(entries);
+      return <WelcomeState />;
+    }
 
     if (isSearchActive) {
       if (searchError) return <ErrorState message={searchError} />;
