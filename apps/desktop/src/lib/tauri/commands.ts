@@ -39,6 +39,11 @@ export function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
 
+/** Download the given installer URL, launch it, and quit the app to update. */
+export function installUpdate(url: string): Promise<void> {
+  return invoke<void>("install_update", { url });
+}
+
 /** Get application-specific directories (data, config, cache, log). */
 export function appDirectories(): Promise<AppDirectoriesResponse> {
   return invoke<AppDirectoriesResponse>("app_directories");

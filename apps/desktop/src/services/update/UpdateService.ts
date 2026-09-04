@@ -12,8 +12,8 @@ import { version } from "@/lib/tauri";
 const MANIFEST_URL = "https://storageos.onrender.com/version";
 
 interface UpdateManifest {
-  windows?: { version?: string; notes?: string };
-  android?: { version?: string; versionCode?: number; notes?: string };
+  windows?: { version?: string; url?: string; notes?: string };
+  android?: { version?: string; versionCode?: number; url?: string; notes?: string };
   downloadUrl?: string;
 }
 
@@ -22,6 +22,9 @@ export interface UpdateInfo {
   currentVersion: string;
   latestVersion: string;
   notes?: string;
+  /** Direct installer URL to download + run (empty if the manifest omits it). */
+  installUrl: string;
+  /** Website / releases page, used as a fallback link. */
   downloadUrl: string;
 }
 
@@ -58,6 +61,7 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
       currentVersion: current,
       latestVersion: latest,
       notes: manifest.windows?.notes,
+      installUrl: manifest.windows?.url ?? "",
       downloadUrl: manifest.downloadUrl ?? "",
     };
   } catch {

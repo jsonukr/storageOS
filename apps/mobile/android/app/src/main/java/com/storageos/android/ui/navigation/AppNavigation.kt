@@ -24,7 +24,11 @@ import com.storageos.android.ui.devices.DevicesScreen
 import com.storageos.android.ui.pair.PairScreen
 import com.storageos.android.ui.settings.SettingsScreen
 import com.storageos.android.ui.transfers.TransfersScreen
-import com.storageos.android.update.UpdateGate
+import com.storageos.android.update.UpdateBanner
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 
 @Composable
 fun AppNavigation() {
@@ -159,17 +163,19 @@ fun AppNavigation() {
         }
     }
 
-    if (showNav) {
-        AdaptiveScaffold(
-            currentRoute = currentRoute,
-            onNavigate = navigateToDestination,
-            content = content,
-        )
-    } else {
-        content()
+    // Update banner sits above everything; renders nothing when up to date.
+    Column(modifier = Modifier.fillMaxSize()) {
+        UpdateBanner()
+        Box(modifier = Modifier.weight(1f)) {
+            if (showNav) {
+                AdaptiveScaffold(
+                    currentRoute = currentRoute,
+                    onNavigate = navigateToDestination,
+                    content = content,
+                )
+            } else {
+                content()
+            }
+        }
     }
-
-    // Overlays an "update available" dialog on top of any screen if the relay's
-    // /version manifest reports a newer build than this one.
-    UpdateGate()
 }

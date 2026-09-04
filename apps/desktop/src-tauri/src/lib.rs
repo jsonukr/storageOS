@@ -37,6 +37,7 @@ pub fn run() {
             commands::remote_transfer::remote_upload,
             commands::pick_files::pick_files,
             commands::open_url::open_url,
+            commands::update::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running StorageOS");
