@@ -1,33 +1,45 @@
+use serde_json::{json, Value};
 use storageos_core::models::common::SearchSnapshot;
 use storageos_core::protocol::envelope::{Message, MessageId, MessageKind};
 use storageos_core::protocol::payloads::*;
 use storageos_core::protocol::CURRENT_VERSION;
 
+use crate::dto;
 use crate::file_service;
 
-pub async fn dispatch(request: &Message) -> Message {
+/// Dispatch a relay request and return the response **envelope as JSON**.
+///
+/// The response payload uses the exact shape the Android relay handler emits —
+/// client-facing DTOs carried as a JSON string under `data` (browse/search) or
+/// as flat `success`/`path` fields (operations). This is what BOTH relay
+/// consumers parse (the desktop `relay_proxy` and the Android relay client).
+/// Previously the desktop served the internal typed protocol payloads (e.g.
+/// `{ "type": "roots_response", "roots": [<core Root>] }`), which neither
+/// consumer could parse — so a desktop answering over the relay produced an
+/// unreadable response and PC↔PC (and mobile→PC) drive/folder listing failed,
+/// while PC→mobile worked because the phone already emits this `data` format.
+pub async fn dispatch(request: &Message) -> Value {
+    let request_id = request.id.0.clone();
+
     let payload = match &request.payload {
-        Payload::RootsRequest(_) => handle_roots(),
-        Payload::DirectoryRequest(req) => handle_directory(req),
-        Payload::CreateFolderRequest(req) => handle_create_folder(req),
-        Payload::RenameRequest(req) => handle_rename(req),
-        Payload::DeleteRequest(req) => handle_delete(req),
-        Payload::SearchRequest(req) => handle_search(req),
-        Payload::ThumbnailRequest(req) => handle_thumbnail(req),
-        Payload::DownloadRequest(req) => handle_download_start(req).await,
-        _ => Payload::Error(ErrorPayload {
-            code: ErrorCode::InvalidRequest,
-            message: "Unsupported request type".to_string(),
-            details: None,
-        }),
+        Payload::RootsRequest(_) => roots_payload(&request_id),
+        Payload::DirectoryRequest(req) => directory_payload(&req.path, &request_id),
+        Payload::CreateFolderRequest(req) => create_folder_payload(req, &request_id),
+        Payload::RenameRequest(req) => rename_payload(req, &request_id),
+        Payload::DeleteRequest(req) => delete_payload(req, &request_id),
+        Payload::SearchRequest(req) => search_payload(req, &request_id),
+        Payload::ThumbnailRequest(req) => thumbnail_payload(req, &request_id),
+        Payload::DownloadRequest(req) => download_payload(req, &request_id),
+        _ => error_payload(&request_id, "Unsupported request type"),
     };
 
-    let kind = match &payload {
-        Payload::Error(_) => MessageKind::Error,
-        _ => MessageKind::Response,
-    };
+    let is_error = payload.get("type").and_then(|t| t.as_str()) == Some("error_response");
 
-    Message {
+    // Build the envelope with the real Message type so its field names and the
+    // envelope-level `request_id` (used for correlation) are byte-identical to
+    // before; then swap in the JSON payload (Message.payload is a typed enum
+    // and can't hold arbitrary JSON).
+    let envelope = Message {
         version: CURRENT_VERSION,
         id: MessageId::new(uuid::Uuid::new_v4().to_string()),
         request_id: Some(request.id.clone()),
@@ -37,136 +49,117 @@ pub async fn dispatch(request: &Message) -> Message {
             .as_secs() as i64,
         source: request.destination.clone(),
         destination: request.source.clone(),
-        kind,
-        payload,
+        kind: if is_error { MessageKind::Error } else { MessageKind::Response },
+        payload: Payload::RootsRequest(RootsRequest {}), // placeholder, replaced below
+    };
+
+    let mut value = serde_json::to_value(&envelope).unwrap_or_else(|_| json!({}));
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("payload".to_string(), payload);
     }
+    value
 }
 
-fn handle_roots() -> Payload {
+/// `{ "type": kind, "request_id": id, "data": "<json string of `data`>" }`
+fn data_response<T: serde::Serialize>(kind: &str, request_id: &str, data: &T) -> Value {
+    let data_str = serde_json::to_string(data).unwrap_or_else(|_| "[]".to_string());
+    json!({ "type": kind, "request_id": request_id, "data": data_str })
+}
+
+fn roots_payload(request_id: &str) -> Value {
     match storageos_core::filesystem::list_roots() {
-        Ok(roots) => Payload::RootsResponse(RootsResponse { roots }),
-        Err(e) => error_payload(ErrorCode::InternalError, &e.to_string()),
-    }
-}
-
-fn handle_directory(req: &DirectoryRequest) -> Payload {
-    match storageos_core::filesystem::list_directory(&req.path) {
-        Ok(entries) => {
-            let total_count = entries.len() as u32;
-            Payload::DirectoryResponse(DirectoryResponse {
-                path: req.path.clone(),
-                entries,
-                total_count,
-            })
+        Ok(roots) => {
+            let dtos: Vec<dto::LocalDriveDto> =
+                roots.into_iter().map(dto::LocalDriveDto::from).collect();
+            data_response("roots_response", request_id, &dtos)
         }
-        Err(e) => core_error_to_payload(&e),
+        Err(e) => error_payload(request_id, &e.to_string()),
     }
 }
 
-fn handle_create_folder(req: &CreateFolderRequest) -> Payload {
-    match storageos_core::filesystem::create_folder(&req.parent, &req.name) {
-        Ok(result) => Payload::OperationResponse(OperationResponse {
-            success: result.success,
-            path: result.path,
-            error: None,
-        }),
-        Err(e) => core_error_to_payload(&e),
+fn directory_payload(path: &str, request_id: &str) -> Value {
+    match storageos_core::filesystem::list_directory(path) {
+        Ok(entries) => {
+            let dtos: Vec<dto::DirectoryEntryDto> =
+                entries.into_iter().map(dto::DirectoryEntryDto::from).collect();
+            data_response("directory_response", request_id, &dtos)
+        }
+        Err(e) => core_error_payload(request_id, &e),
     }
 }
 
-fn handle_rename(req: &RenameEntryRequest) -> Payload {
-    match storageos_core::filesystem::rename_item(&req.path, &req.new_name) {
-        Ok(result) => Payload::OperationResponse(OperationResponse {
-            success: result.success,
-            path: result.path,
-            error: None,
-        }),
-        Err(e) => core_error_to_payload(&e),
-    }
-}
-
-fn handle_delete(req: &DeleteEntryRequest) -> Payload {
-    match storageos_core::filesystem::delete_item(&req.path) {
-        Ok(result) => Payload::OperationResponse(OperationResponse {
-            success: result.success,
-            path: result.path,
-            error: None,
-        }),
-        Err(e) => core_error_to_payload(&e),
-    }
-}
-
-fn handle_search(req: &SearchEntryRequest) -> Payload {
+fn search_payload(req: &SearchEntryRequest, request_id: &str) -> Value {
     let noop = |_: &SearchSnapshot| {};
     match storageos_core::search::search_directory(&req.path, &req.query, req.recursive, &noop) {
         Ok(entries) => {
-            let total_count = entries.len() as u32;
-            Payload::SearchResponse(SearchEntryResponse {
-                entries,
-                total_count,
-            })
+            let dtos: Vec<dto::DirectoryEntryDto> =
+                entries.into_iter().map(dto::DirectoryEntryDto::from).collect();
+            data_response("search_response", request_id, &dtos)
         }
-        Err(e) => core_error_to_payload(&e),
+        Err(e) => core_error_payload(request_id, &e),
     }
 }
 
-fn handle_thumbnail(req: &ThumbnailRequest) -> Payload {
+fn operation_response(success: bool, path: String) -> Value {
+    json!({ "type": "operation_response", "success": success, "path": path })
+}
+
+fn create_folder_payload(req: &CreateFolderRequest, request_id: &str) -> Value {
+    match storageos_core::filesystem::create_folder(&req.parent, &req.name) {
+        Ok(r) => operation_response(r.success, r.path),
+        Err(e) => core_error_payload(request_id, &e),
+    }
+}
+
+fn rename_payload(req: &RenameEntryRequest, request_id: &str) -> Value {
+    match storageos_core::filesystem::rename_item(&req.path, &req.new_name) {
+        Ok(r) => operation_response(r.success, r.path),
+        Err(e) => core_error_payload(request_id, &e),
+    }
+}
+
+fn delete_payload(req: &DeleteEntryRequest, request_id: &str) -> Value {
+    match storageos_core::filesystem::delete_item(&req.path) {
+        Ok(r) => operation_response(r.success, r.path),
+        Err(e) => core_error_payload(request_id, &e),
+    }
+}
+
+fn thumbnail_payload(req: &ThumbnailRequest, request_id: &str) -> Value {
     match file_service::generate_thumbnail(&req.path, req.max_size) {
         Ok(bytes) => {
             use base64::Engine;
             let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            Payload::ThumbnailResponse(ThumbnailResponse {
-                data,
-                content_type: "image/jpeg".to_string(),
-            })
+            json!({ "type": "thumbnail_response", "data": data, "content_type": "image/jpeg" })
         }
-        Err(e) => core_error_to_payload(&e),
+        Err(e) => core_error_payload(request_id, &e),
     }
 }
 
-async fn handle_download_start(req: &DownloadRequest) -> Payload {
+fn download_payload(req: &DownloadRequest, request_id: &str) -> Value {
     match file_service::prepare_download(&req.path) {
-        Ok((canonical, content_type)) => {
-            let file_name = canonical
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("download")
-                .to_string();
-
-            match std::fs::read(&canonical) {
-                Ok(bytes) => {
-                    use base64::Engine;
-                    let total_bytes = bytes.len() as u64;
-                    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    Payload::DownloadData(DownloadData {
-                        transfer_id: req.transfer_id.clone(),
-                        offset: 0,
-                        data,
-                        is_last: true,
-                    })
-                }
-                Err(e) => error_payload(ErrorCode::InternalError, &format!("Read error: {e}")),
+        Ok((canonical, _content_type)) => match std::fs::read(&canonical) {
+            Ok(bytes) => {
+                use base64::Engine;
+                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                json!({
+                    "type": "download_data",
+                    "transfer_id": req.transfer_id.clone(),
+                    "offset": 0,
+                    "data": data,
+                    "is_last": true,
+                })
             }
-        }
-        Err(e) => core_error_to_payload(&e),
+            Err(e) => error_payload(request_id, &format!("Read error: {e}")),
+        },
+        Err(e) => core_error_payload(request_id, &e),
     }
 }
 
-fn core_error_to_payload(e: &storageos_core::errors::CoreError) -> Payload {
-    use storageos_core::errors::ErrorKind;
-    let code = match e.kind {
-        ErrorKind::NotFound => ErrorCode::NotFound,
-        ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
-        ErrorKind::InvalidArgument => ErrorCode::InvalidRequest,
-        _ => ErrorCode::InternalError,
-    };
-    error_payload(code, &e.message)
+fn core_error_payload(request_id: &str, e: &storageos_core::errors::CoreError) -> Value {
+    error_payload(request_id, &e.message)
 }
 
-fn error_payload(code: ErrorCode, message: &str) -> Payload {
-    Payload::Error(ErrorPayload {
-        code,
-        message: message.to_string(),
-        details: None,
-    })
+fn error_payload(request_id: &str, message: &str) -> Value {
+    json!({ "type": "error_response", "request_id": request_id, "error": message })
 }
