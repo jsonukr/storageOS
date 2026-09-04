@@ -1,0 +1,4 @@
+# Signing secrets — keep these local, never commit them
+keystore.properties
+*.jks
+*.keystore

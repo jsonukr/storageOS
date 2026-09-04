@@ -46,6 +46,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/storageos-agent"]
+    "externalBin": ["binaries/storageos-agent"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis-hooks.nsh"
+      }
+    }
   }
 }

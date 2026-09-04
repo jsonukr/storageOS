@@ -1,9 +1,22 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::errors::{CoreError, CoreResult};
 use crate::models::{Entry, EntryId, EntryKind, EntryMetadata};
+
+/// Upper bound on entries returned for a single directory. Enumerating names is
+/// cheap even for huge folders, but stat-ing and serializing every entry is not
+/// — so we sort names first and only fully load this many. Folders larger than
+/// this return the first page (alphabetical, folders first); use search to
+/// reach the rest. Chosen well above any normal folder.
+const MAX_ENTRIES: usize = 10_000;
+
+struct ShallowEntry {
+    name: String,
+    path: PathBuf,
+    is_dir: bool,
+}
 
 pub fn list_directory(path: &str) -> CoreResult<Vec<Entry>> {
     let dir = Path::new(path);
@@ -28,23 +41,45 @@ pub fn list_directory(path: &str) -> CoreResult<Vec<Entry>> {
         }
     })?;
 
-    let mut entries = Vec::new();
-
+    // Phase 1 — cheap enumerate: name + type only, no per-entry stat. On Windows
+    // (and most Unix) DirEntry::file_type() needs no extra syscall, so even a
+    // folder with hundreds of thousands of files enumerates quickly.
+    let mut shallow: Vec<ShallowEntry> = Vec::new();
     for result in read_dir {
         let dir_entry = match result {
             Ok(e) => e,
             Err(_) => continue,
         };
+        let is_dir = dir_entry
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false);
+        shallow.push(ShallowEntry {
+            name: dir_entry.file_name().to_string_lossy().into_owned(),
+            path: dir_entry.path(),
+            is_dir,
+        });
+    }
 
-        let metadata = match dir_entry.metadata() {
+    shallow.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    // Cap after sorting so the returned page is deterministic (folders first,
+    // then alphabetical) rather than an arbitrary slice.
+    shallow.truncate(MAX_ENTRIES);
+
+    // Phase 2 — stat only the (capped) page for size / dates / attributes.
+    let mut entries = Vec::with_capacity(shallow.len());
+    for s in shallow {
+        let metadata = match fs::symlink_metadata(&s.path) {
             Ok(m) => m,
             Err(_) => continue,
         };
 
-        let name = dir_entry.file_name().to_string_lossy().into_owned();
-        let full_path = dir_entry.path().to_string_lossy().into_owned();
-        let is_directory = metadata.is_dir();
-        let size = if is_directory { 0 } else { metadata.len() };
+        let size = if s.is_dir { 0 } else { metadata.len() };
 
         let modified_at = metadata
             .modified()
@@ -58,26 +93,20 @@ pub fn list_directory(path: &str) -> CoreResult<Vec<Entry>> {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
 
-        // Reuse the metadata we already fetched instead of a second stat per
-        // entry — that second syscall roughly doubled the cost of listing large
-        // (and network) folders.
-        let hidden = is_hidden_meta(&name, &metadata);
+        let hidden = is_hidden_meta(&s.name, &metadata);
         let readonly = metadata.permissions().readonly();
 
-        let extension = if is_directory {
+        let extension = if s.is_dir {
             None
         } else {
-            dir_entry
-                .path()
-                .extension()
-                .map(|e| e.to_string_lossy().into_owned())
+            s.path.extension().map(|e| e.to_string_lossy().into_owned())
         };
 
         entries.push(Entry {
-            id: EntryId::new(&full_path),
-            name,
-            path: full_path,
-            kind: if is_directory { EntryKind::Folder } else { EntryKind::File },
+            id: EntryId::new(s.path.to_string_lossy().as_ref()),
+            name: s.name,
+            path: s.path.to_string_lossy().into_owned(),
+            kind: if s.is_dir { EntryKind::Folder } else { EntryKind::File },
             size,
             created_at,
             modified_at,
@@ -89,14 +118,6 @@ pub fn list_directory(path: &str) -> CoreResult<Vec<Entry>> {
             },
         });
     }
-
-    entries.sort_by(|a, b| {
-        let a_dir = matches!(a.kind, EntryKind::Folder);
-        let b_dir = matches!(b.kind, EntryKind::Folder);
-        b_dir
-            .cmp(&a_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
 
     Ok(entries)
 }

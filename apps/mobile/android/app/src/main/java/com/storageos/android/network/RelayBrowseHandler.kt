@@ -21,6 +21,7 @@ import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "RelayBrowseHandler"
+private const val MAX_ENTRIES = 10_000
 
 data class UploadContext(
     val tempFile: File,
@@ -99,6 +100,7 @@ class RelayBrowseHandler(
         val entries = (dir.listFiles() ?: emptyArray())
             .filter { !it.name.startsWith(".") }
             .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
+            .take(MAX_ENTRIES) // bound huge folders (folders-first, alphabetical)
             .map { fileToEntryJson(it) }
 
         val payload = buildJsonObject {
