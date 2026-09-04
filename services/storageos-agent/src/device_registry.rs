@@ -256,6 +256,26 @@ impl DeviceRegistry {
             )?;
         }
 
+        // Always register a relay fallback endpoint. The relay proxy addresses a
+        // peer purely by device_id (no host/port needed), so this lets the
+        // desktop reach a device over the cloud relay whenever its LAN address
+        // is unreachable — e.g. the two devices are on different networks. LAN
+        // (priority 10) still wins whenever it's reachable; relay (priority 50)
+        // is the fallback.
+        self.upsert_endpoint_inner(
+            &conn,
+            &device.device_id,
+            &EndpointRecord {
+                transport: "relay".to_string(),
+                host: "relay".to_string(),
+                port: 0,
+                priority: 50,
+                reachable: device.status == "online",
+                last_seen: device.last_seen,
+                last_successful: if device.status == "online" { device.last_seen } else { 0 },
+            },
+        )?;
+
         Ok(())
     }
 

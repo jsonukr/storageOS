@@ -261,6 +261,19 @@ async fn handle_incoming_text(
                 }
             }
         }
+
+        // File uploads arriving over the relay are a stateful, multi-message flow
+        // (upload_start → upload_data* → upload_complete). The stateless
+        // dispatcher can't assemble the chunks, so handle them here, keyed by
+        // transfer_id, and queue any response on the outbound channel.
+        if let Some(maybe_reply) = crate::relay_upload::try_handle(&raw, device_id).await {
+            if let Some(reply) = maybe_reply {
+                if let Ok(json) = serde_json::to_string(&reply) {
+                    let _ = outbound_tx.send(json);
+                }
+            }
+            return;
+        }
     }
 
     let msg: Message = match serde_json::from_str(text) {

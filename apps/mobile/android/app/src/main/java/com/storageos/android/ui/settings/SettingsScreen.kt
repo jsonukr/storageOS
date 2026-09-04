@@ -1,5 +1,6 @@
 package com.storageos.android.ui.settings
 
+import com.storageos.android.BuildConfig
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -85,7 +86,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             SettingsRow(
                 icon = { Icon(Icons.Default.Info, null, modifier = Modifier.size(24.dp)) },
                 title = "StorageOS Android",
-                subtitle = "Version 0.1.0",
+                subtitle = "Version ${BuildConfig.VERSION_NAME}",
             )
             SettingsRow(
                 icon = null,

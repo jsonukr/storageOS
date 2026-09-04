@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.storageos.android.network.RelayAgentApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -175,6 +176,82 @@ class DownloadManager(private val context: Context) {
                             totalBytes = totalBytes,
                             speedBytesPerSec = 0,
                             estimatedRemainingMs = 0,
+                        )
+                    }
+                    notifications.showComplete(job.id, entry.name)
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null)
+                    throw e
+                }
+            } catch (e: Exception) {
+                if (!cancelledIds.contains(job.id)) {
+                    updateJob(job.id) {
+                        it.copy(status = TransferStatus.Failed, error = e.message ?: "Download failed")
+                    }
+                    notifications.showFailed(job.id, entry.name, e.message)
+                } else {
+                    notifications.cancel(job.id)
+                }
+            }
+            getJob(job.id)
+        }
+    }
+
+    /**
+     * Download over the cloud relay (used when the phone and the remote device
+     * are on different networks, so there's no direct LAN address to GET from).
+     * The relay path returns the whole file as one base64 response, so there's
+     * no byte-stream to show incremental progress — the job flips Running →
+     * Completed once the bytes arrive and are written to Downloads.
+     */
+    suspend fun relayDownload(relayApi: RelayAgentApi, entry: DownloadEntry): TransferJob {
+        val job = TransferJob(
+            fileName = entry.name,
+            sourcePath = entry.fullPath,
+            totalBytes = entry.size,
+        )
+        _jobs.value = _jobs.value + job
+
+        return withContext(Dispatchers.IO) {
+            try {
+                updateJob(job.id) { it.copy(status = TransferStatus.Running) }
+                notifications.showProgress(job.id, entry.name, 0, "Downloading…")
+
+                val bytes = relayApi.downloadBytes(entry.fullPath)
+                if (cancelledIds.contains(job.id)) {
+                    notifications.cancel(job.id)
+                    return@withContext getJob(job.id)
+                }
+
+                val uniqueName = resolveUniqueName(entry.name)
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, uniqueName)
+                    put(MediaStore.Downloads.MIME_TYPE, guessMimeType(uniqueName))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                        put(MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                }
+
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    ?: run {
+                        updateJob(job.id) { it.copy(status = TransferStatus.Failed, error = "Failed to create file in Downloads") }
+                        return@withContext getJob(job.id)
+                    }
+
+                try {
+                    resolver.openOutputStream(uri)?.use { output -> output.write(bytes) }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        contentValues.clear()
+                        contentValues.put(MediaStore.Downloads.IS_PENDING, 0)
+                        resolver.update(uri, contentValues, null, null)
+                    }
+                    updateJob(job.id) {
+                        it.copy(
+                            status = TransferStatus.Completed,
+                            bytesTransferred = bytes.size.toLong(),
+                            totalBytes = bytes.size.toLong(),
                         )
                     }
                     notifications.showComplete(job.id, entry.name)

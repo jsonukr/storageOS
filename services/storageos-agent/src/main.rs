@@ -13,6 +13,7 @@ mod presence;
 mod relay;
 mod relay_handle;
 mod relay_proxy;
+mod relay_upload;
 mod security;
 mod server;
 mod tray;

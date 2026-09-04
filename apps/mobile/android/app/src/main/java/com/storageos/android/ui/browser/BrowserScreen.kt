@@ -190,14 +190,21 @@ fun BrowserScreen(
     val onDownloadEntry = { entry: DirectoryEntry ->
         scope.launch {
             scope.launch { snackbar.showSnackbar("Downloading ${entry.name}…") }
-            val result = downloadManager.download(
-                agentBaseUrl = viewModel.agentBaseUrl,
-                entry = DownloadEntry(
-                    name = entry.name,
-                    fullPath = entry.fullPath,
-                    size = entry.size,
-                ),
+            val downloadEntry = DownloadEntry(
+                name = entry.name,
+                fullPath = entry.fullPath,
+                size = entry.size,
             )
+            // On a relay connection there's no direct LAN address to GET from, so
+            // pull the file over the relay; otherwise use the fast direct HTTP path.
+            val result = if (api is com.storageos.android.network.RelayAgentApi) {
+                downloadManager.relayDownload(relayApi = api, entry = downloadEntry)
+            } else {
+                downloadManager.download(
+                    agentBaseUrl = viewModel.agentBaseUrl,
+                    entry = downloadEntry,
+                )
+            }
             when (result.status) {
                 TransferStatus.Completed ->
                     snackbar.showSnackbar("${entry.name} saved to Downloads")

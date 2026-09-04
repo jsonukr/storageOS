@@ -35,6 +35,7 @@ import kotlin.coroutines.resumeWithException
 
 private const val TAG = "RelayAgentApi"
 private const val REQUEST_TIMEOUT_MS = 30_000L
+private const val DOWNLOAD_TIMEOUT_MS = 300_000L
 
 class RelayAgentApi(
     private val relay: RelayClient,
@@ -56,11 +57,14 @@ class RelayAgentApi(
         }
     }
 
-    private suspend fun sendAndWait(payload: JsonObject): RelayMessage {
+    private suspend fun sendAndWait(
+        payload: JsonObject,
+        timeoutMs: Long = REQUEST_TIMEOUT_MS,
+    ): RelayMessage {
         val requestId = payload["request_id"]?.jsonPrimitive?.content
             ?: throw IllegalArgumentException("Payload must contain request_id")
 
-        return withTimeout(REQUEST_TIMEOUT_MS) {
+        return withTimeout(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 pendingRequests[requestId] = { msg ->
                     val error = msg.payload["error"]?.jsonPrimitive?.contentOrNull
@@ -287,7 +291,9 @@ class RelayAgentApi(
             put("transfer_id", UUID.randomUUID().toString())
             put("path", path)
         }
-        val response = sendAndWait(payload)
+        // File payloads (whole file, base64) can dwarf a control message, so give
+        // the transfer far longer than the 30s request default before timing out.
+        val response = sendAndWait(payload, timeoutMs = DOWNLOAD_TIMEOUT_MS)
         val dataB64 = response.payload["data"]?.jsonPrimitive?.contentOrNull
             ?: throw RuntimeException("No data in download response")
         return Base64.decode(dataB64, Base64.DEFAULT)
