@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# StorageOS release policy: every push MUST include a version bump.
+# Blocks the push unless the desktop package version changed in the commits
+# being pushed. Bump with:  node scripts/bump-version.mjs
+#
+# Enabled via:  git config core.hooksPath .githooks
+#
+
+zero=0000000000000000000000000000000000000000
+VERSION_FILE="apps/desktop/src-tauri/Cargo.toml"
+
+while read local_ref local_sha remote_ref remote_sha; do
+  # Skip branch deletions
+  [ "$local_sha" = "$zero" ] && continue
+
+  if [ "$remote_sha" = "$zero" ]; then
+    # New branch on the remote: check the tip commit for a bump
+    range="$local_sha~1..$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  # A bump adds a new `version = "x.y.z"` line to the canonical Cargo.toml
+  if git diff "$range" -- "$VERSION_FILE" 2>/dev/null | grep -qE '^\+version = "[0-9]+\.[0-9]+\.[0-9]+"'; then
+    exit 0
+  fi
+done
+
+echo "────────────────────────────────────────────────────────────────────"
+echo " ✗ Push blocked — no version bump detected."
+echo ""
+echo "   StorageOS policy: every push must bump the version."
+echo "   Run:   node scripts/bump-version.mjs"
+echo "   then:  commit the change and push again."
+echo "────────────────────────────────────────────────────────────────────"
+exit 1

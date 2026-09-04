@@ -1,5 +1,7 @@
+import { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useSidebarStore } from "../stores/sidebar";
+import { version } from "@/lib/tauri";
 import type { NavItem } from "../types";
 
 const navItems: NavItem[] = [
@@ -45,6 +47,11 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   const collapsed = useSidebarStore((s) => s.collapsed);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    version().then((v) => setAppVersion(v.app_version)).catch(() => {});
+  }, []);
 
   return (
     <aside
@@ -108,9 +115,9 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-border px-3 py-2">
         {!collapsed ? (
-          <span className="text-[11px] text-text-tertiary">v0.1.0</span>
+          <span className="text-[11px] text-text-tertiary">v{appVersion || "…"}</span>
         ) : (
-          <span className="flex justify-center text-[10px] text-text-tertiary">0.1</span>
+          <span className="flex justify-center text-[10px] text-text-tertiary">{appVersion ? appVersion.split(".").slice(0, 2).join(".") : ""}</span>
         )}
       </div>
     </aside>
