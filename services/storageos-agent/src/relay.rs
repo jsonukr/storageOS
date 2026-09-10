@@ -158,7 +158,21 @@ async fn run_session(
                     tracing::warn!(error = %e, "Relay heartbeat failed");
                     break;
                 }
-                tracing::debug!(seq = ping_seq, "Relay heartbeat sent");
+                // Also send a TEXT keepalive. Hosting proxies (e.g. Render) idle-close
+                // a WebSocket that only exchanges control frames (ping/pong), which
+                // was resetting the relay connection roughly every ~100s. A periodic
+                // data frame keeps it alive; the relay ignores anything addressed to
+                // "relay". Sent as a raw envelope so no extra types are needed.
+                if let Err(e) = sink
+                    .send(tungstenite::Message::Text(
+                        r#"{"destination":"relay","payload":{"type":"ping"}}"#.to_string(),
+                    ))
+                    .await
+                {
+                    tracing::warn!(error = %e, "Relay keepalive failed");
+                    break;
+                }
+                tracing::debug!(seq = ping_seq, "Relay heartbeat + keepalive sent");
             }
             outbound = outbound_rx.recv() => {
                 match outbound {

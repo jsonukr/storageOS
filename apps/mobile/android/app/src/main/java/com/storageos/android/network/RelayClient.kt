@@ -3,9 +3,11 @@ package com.storageos.android.network
 import com.storageos.android.data.DeviceIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -95,6 +97,7 @@ class RelayClient(
     val deviceId: String get() = identity.deviceId
 
     private var ws: WebSocket? = null
+    private var keepAliveJob: Job? = null
     private var reconnectAttempt = 0
     private var shouldReconnect = true
     private var pendingPairCode: String? = null
@@ -123,10 +126,29 @@ class RelayClient(
 
     fun disconnect() {
         shouldReconnect = false
+        keepAliveJob?.cancel()
         ws?.close(1000, "Client disconnect")
         ws = null
         _connected.value = false
         browseDispatcher.close()
+    }
+
+    /**
+     * Send a small text frame every 15s while connected. Hosting proxies (e.g.
+     * Render) idle-close a WebSocket that only exchanges control frames — the
+     * OkHttp ping interval alone isn't enough — so a periodic *data* frame keeps
+     * the relay connection alive. The relay ignores messages addressed to "relay".
+     */
+    private fun startKeepAlive(webSocket: WebSocket) {
+        keepAliveJob?.cancel()
+        keepAliveJob = scope.launch {
+            while (isActive) {
+                delay(15_000)
+                runCatching {
+                    webSocket.send("{\"destination\":\"relay\",\"payload\":{\"type\":\"ping\"}}")
+                }
+            }
+        }
     }
 
     fun sendMessage(destination: String, payload: JsonObject, kind: String = "request", requestId: String? = null, messageId: String? = null) {
@@ -178,6 +200,7 @@ class RelayClient(
                     Log.i(TAG, "Flushing queued pair_code_register after HELLO")
                     doRegisterPairCode(code)
                 }
+                startKeepAlive(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -204,12 +227,14 @@ class RelayClient(
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.w(TAG, "WebSocket closed code=$code reason=$reason")
                 _connected.value = false
+                keepAliveJob?.cancel()
                 scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket failure: ${t.message}", t)
                 _connected.value = false
+                keepAliveJob?.cancel()
                 scheduleReconnect()
             }
         })
