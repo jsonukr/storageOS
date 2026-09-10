@@ -208,6 +208,14 @@ impl DeviceRegistry {
     }
 
     pub fn register_device(&self, device: &DeviceRecord) -> Result<(), String> {
+        // Probe the peer's LAN address BEFORE taking the DB lock. A device paired
+        // across networks reports a LAN IP that isn't routable from here; marking
+        // that endpoint unreachable makes the desktop pick the relay transport
+        // instead of hanging on (or silently failing against) a dead address.
+        let lan_reachable = !device.address.is_empty()
+            && device.status == "online"
+            && probe_lan(&device.address);
+
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO devices (
@@ -249,9 +257,9 @@ impl DeviceRegistry {
                     host,
                     port,
                     priority: 10,
-                    reachable: device.status == "online",
+                    reachable: lan_reachable,
                     last_seen: device.last_seen,
-                    last_successful: if device.status == "online" { device.last_seen } else { 0 },
+                    last_successful: if lan_reachable { device.last_seen } else { 0 },
                 },
             )?;
         }
@@ -581,4 +589,22 @@ fn parse_address(address: &str) -> (String, u16) {
         address.to_string(),
         storageos_core::config::constants::DEFAULT_AGENT_PORT,
     )
+}
+
+/// Best-effort check that a peer's LAN address is actually reachable from here.
+///
+/// A device paired across networks (phone on mobile data, PC on Wi-Fi) reports
+/// a private LAN IP that this machine can't route to. A short TCP connect tells
+/// us whether the direct LAN endpoint is usable; if not, the caller marks it
+/// unreachable so transport selection falls back to the relay instead of
+/// hanging on a dead address.
+fn probe_lan(address: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let mut addrs = match address.to_socket_addrs() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    addrs.any(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok())
 }

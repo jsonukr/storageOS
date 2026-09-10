@@ -53,3 +53,6 @@ pnpm-debug.log*
 # Temp files
 *.tmp
 *.bak
+
+# Kotlin incremental compiler session files
+.kotlin/

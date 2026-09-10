@@ -1,12 +1,12 @@
 {
   "windows": {
-    "version": "0.1.5",
+    "version": "0.1.6",
     "url": "https://github.com/jsonukr/storageOS/releases/latest/download/StorageOS-Setup-x64.exe",
     "notes": "Preview build: cross-device pairing, browsing, and drive listing fixes."
   },
   "android": {
-    "version": "0.1.5",
-    "versionCode": 6,
+    "version": "0.1.6",
+    "versionCode": 7,
     "url": "https://github.com/jsonukr/storageOS/releases/latest/download/StorageOS.apk",
     "notes": "Preview build: cross-device pairing, browsing, and drive listing fixes."
   },

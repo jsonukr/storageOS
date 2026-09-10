@@ -287,9 +287,13 @@ pub async fn relay_download(
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
-    let response = state
+    // Use request_raw (not the typed request) so we can read the base64 blob
+    // directly from the `data` field. Both a desktop peer (dispatcher) and an
+    // Android peer (relay browse handler) answer a download_request with a
+    // single whole-file `download_data` payload in this shape.
+    let raw = state
         .relay_handle
-        .request(
+        .request_raw(
             &params.device,
             Payload::DownloadRequest(DownloadRequest {
                 transfer_id: transfer_id.clone(),
@@ -299,22 +303,26 @@ pub async fn relay_download(
         .await
         .map_err(|e| relay_error(&e))?;
 
-    match response.payload {
-        Payload::DownloadData(data) => {
-            use base64::Engine;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(&data.data)
-                .map_err(|e| relay_error(&format!("Base64 decode error: {e}")))?;
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/octet-stream")
-                .header(header::CONTENT_LENGTH, bytes.len())
-                .body(Body::from(bytes))
-                .unwrap())
-        }
-        _ => Err(relay_error("Unexpected response type")),
+    let payload = extract_payload(&raw)?;
+    if let Some(err) = payload.get("error").and_then(|e| e.as_str()) {
+        return Err(relay_error(err));
     }
+    let data_b64 = payload
+        .get("data")
+        .and_then(|d| d.as_str())
+        .ok_or_else(|| relay_error("Download response missing data"))?;
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| relay_error(&format!("Base64 decode error: {e}")))?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, bytes.len())
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 pub async fn relay_upload(

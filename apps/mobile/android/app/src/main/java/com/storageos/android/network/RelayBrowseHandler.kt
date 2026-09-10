@@ -56,6 +56,7 @@ class RelayBrowseHandler(
             "upload_start" -> handleUploadStart(source, originalRequestId, msg.payload)
             "upload_data" -> handleUploadData(source, msg.payload)
             "upload_complete" -> handleUploadComplete(source, originalRequestId, msg.payload)
+            "download_request" -> handleDownloadRequest(source, originalRequestId, msg.payload)
             else -> Log.d(TAG, "Unknown browse request type: $payloadType")
         }
     }
@@ -351,6 +352,40 @@ class RelayBrowseHandler(
             Log.e(TAG, "Failed to finalize upload", e)
             ctx.tempFile.delete()
             sendErrorResponse(destination, requestId, "Failed to complete upload: ${e.message}")
+        }
+    }
+
+    private fun handleDownloadRequest(destination: String, requestId: String, reqPayload: JsonObject) {
+        val path = reqPayload["path"]?.jsonPrimitive?.content ?: ""
+        val transferId = reqPayload["transfer_id"]?.jsonPrimitive?.contentOrNull ?: ""
+        if (path.isBlank()) {
+            sendErrorResponse(destination, requestId, "Missing path")
+            return
+        }
+
+        val file = File(resolvePath(path))
+        if (!file.exists() || !file.isFile) {
+            sendErrorResponse(destination, requestId, "File not found: $path")
+            return
+        }
+
+        try {
+            // Whole file, one base64 blob (offset 0, is_last) — the same shape the
+            // desktop agent emits, so the PC's relay download reads it uniformly.
+            val bytes = file.readBytes()
+            val payload = buildJsonObject {
+                put("type", "download_data")
+                put("request_id", requestId)
+                put("transfer_id", transferId)
+                put("offset", 0L)
+                put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                put("is_last", true)
+            }
+            sendResponse(destination, requestId, payload)
+            Log.i(TAG, "download_data sent for path=$path bytes=${bytes.size}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read file for download", e)
+            sendErrorResponse(destination, requestId, "Read error: ${e.message}")
         }
     }
 
