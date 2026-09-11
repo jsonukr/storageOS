@@ -61,9 +61,31 @@ pub async fn dispatch(request: &Message) -> Value {
 }
 
 /// `{ "type": kind, "request_id": id, "data": "<json string of `data`>" }`
+///
+/// Large listings are gzip+base64 compressed (marker `"enc":"gzip"`) so a big
+/// folder (e.g. a phone camera roll → ~1 MB of JSON) fits inside the relay
+/// request window on a slow link instead of timing out. Small payloads stay
+/// plain — cheaper, and readable by peers that predate compression.
 fn data_response<T: serde::Serialize>(kind: &str, request_id: &str, data: &T) -> Value {
+    const COMPRESS_THRESHOLD: usize = 4096;
     let data_str = serde_json::to_string(data).unwrap_or_else(|_| "[]".to_string());
+    if data_str.len() > COMPRESS_THRESHOLD {
+        if let Ok(encoded) = gzip_base64(&data_str) {
+            return json!({ "type": kind, "request_id": request_id, "data": encoded, "enc": "gzip" });
+        }
+    }
     json!({ "type": kind, "request_id": request_id, "data": data_str })
+}
+
+/// gzip a string then base64 (STANDARD, padded) — pairs with the Kotlin/Rust
+/// relay receivers which base64-decode then gunzip.
+fn gzip_base64(s: &str) -> std::io::Result<String> {
+    use base64::Engine;
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(s.as_bytes())?;
+    let bytes = enc.finish()?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 fn roots_payload(request_id: &str) -> Value {

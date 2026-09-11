@@ -103,9 +103,64 @@ fn extract_payload(raw: &serde_json::Value) -> Result<&serde_json::Value, (Statu
 
 fn parse_data_field<T: serde::de::DeserializeOwned>(payload: &serde_json::Value) -> Result<T, (StatusCode, Json<dto::ErrorDto>)> {
     if let Some(data_str) = payload.get("data").and_then(|d| d.as_str()) {
-        serde_json::from_str(data_str).map_err(|e| relay_error(&format!("Failed to parse data: {e}")))
+        // A large listing may arrive gzip+base64 compressed (sender sets
+        // `enc:"gzip"`). Inflate it back to the JSON string before parsing;
+        // otherwise parse the string as-is (backward compatible).
+        let json_str = if payload.get("enc").and_then(|e| e.as_str()) == Some("gzip") {
+            gunzip_base64(data_str).map_err(|e| relay_error(&format!("Failed to inflate data: {e}")))?
+        } else {
+            data_str.to_string()
+        };
+        serde_json::from_str(&json_str).map_err(|e| relay_error(&format!("Failed to parse data: {e}")))
     } else {
         serde_json::from_value(payload.clone()).map_err(|e| relay_error(&format!("Failed to parse payload: {e}")))
+    }
+}
+
+/// base64-decode (STANDARD) then gunzip — inverse of the senders' gzip+base64.
+fn gunzip_base64(b64: &str) -> std::io::Result<String> {
+    use base64::Engine;
+    use std::io::Read;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut dec = flate2::read::GzDecoder::new(&bytes[..]);
+    let mut out = String::new();
+    dec.read_to_string(&mut out)?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gzip_base64(s: &str) -> std::io::Result<String> {
+        use base64::Engine;
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(s.as_bytes())?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(enc.finish()?))
+    }
+
+    // gzip+base64 produced by Node's zlib.gzipSync (the same RFC-1952 gzip that
+    // Android's java.util.zip.GZIPOutputStream emits) of "CROSSLANG_TEST_12345_"*50.
+    const XLANG_VECTOR: &str =
+        "H4sIAAAAAAAACnMO8g8O9nH0c48PcQ0OiTc0MjYxjXceFRwVHBUc2YIAloRC+RoEAAA=";
+
+    #[test]
+    fn decodes_gzip_from_other_runtimes() {
+        let out = gunzip_base64(XLANG_VECTOR).unwrap();
+        assert_eq!(out, "CROSSLANG_TEST_12345_".repeat(50));
+    }
+
+    #[test]
+    fn gzip_base64_roundtrips() {
+        let s = "[{\"name\":\"file.jpg\",\"full_path\":\"/x/y\"}]".repeat(300);
+        let enc = gzip_base64(&s).unwrap();
+        assert_eq!(gunzip_base64(&enc).unwrap(), s);
+        // Emit a Rust-produced vector so the reverse direction (Rust encode ->
+        // Kotlin/Node decode) can be cross-checked with `cargo test -- --nocapture`.
+        println!("RUST_VECTOR={}", gzip_base64("RUST_TO_KOTLIN_9876").unwrap());
     }
 }
 

@@ -34,7 +34,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 private const val TAG = "RelayAgentApi"
-private const val REQUEST_TIMEOUT_MS = 30_000L
+private const val REQUEST_TIMEOUT_MS = 60_000L
 private const val DOWNLOAD_TIMEOUT_MS = 300_000L
 
 class RelayAgentApi(
@@ -90,7 +90,7 @@ class RelayAgentApi(
         }
         val response = sendAndWait(payload)
         val p = response.payload
-        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        val dataStr = decodeData(p)
         if (dataStr != null) return json.decodeFromString(dataStr)
         return json.decodeFromString(p.toString())
     }
@@ -103,7 +103,7 @@ class RelayAgentApi(
         }
         val response = sendAndWait(payload)
         val p = response.payload
-        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        val dataStr = decodeData(p)
         if (dataStr != null) return json.decodeFromString(dataStr)
         return parseRootsFromDomainPayload(p)
     }
@@ -117,7 +117,7 @@ class RelayAgentApi(
         }
         val response = sendAndWait(payload)
         val p = response.payload
-        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        val dataStr = decodeData(p)
         if (dataStr != null) return json.decodeFromString(dataStr)
         return parseEntriesFromDomainPayload(p)
     }
@@ -133,7 +133,7 @@ class RelayAgentApi(
         }
         val response = sendAndWait(payload)
         val p = response.payload
-        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        val dataStr = decodeData(p)
         if (dataStr != null) return json.decodeFromString(dataStr)
         return parseEntriesFromDomainPayload(p)
     }
@@ -171,6 +171,20 @@ class RelayAgentApi(
         }
         val response = sendAndWait(payload)
         return parseOperationResponse(response.payload)
+    }
+
+    private fun gunzipB64(b64: String): String {
+        val bytes = Base64.decode(b64, Base64.DEFAULT)
+        return java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(bytes)).use {
+            it.readBytes().toString(Charsets.UTF_8)
+        }
+    }
+
+    /** Extract the `data` string from a response, inflating it if the sender
+     *  marked it `enc:"gzip"` (large listings are gzip+base64 compressed). */
+    private fun decodeData(p: JsonObject): String? {
+        val dataStr = decodeData(p) ?: return null
+        return if (p["enc"]?.jsonPrimitive?.contentOrNull == "gzip") gunzipB64(dataStr) else dataStr
     }
 
     private fun parseRootsFromDomainPayload(p: JsonObject): List<DriveInfo> {
@@ -219,7 +233,7 @@ class RelayAgentApi(
     }
 
     private fun parseOperationResponse(p: JsonObject): OperationResponse {
-        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull
+        val dataStr = decodeData(p)
         if (dataStr != null) return json.decodeFromString(dataStr)
         return OperationResponse(
             success = p["success"]?.jsonPrimitive?.booleanOrNull ?: false,

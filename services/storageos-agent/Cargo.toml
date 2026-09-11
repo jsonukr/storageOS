@@ -1,6 +1,6 @@
 [package]
 name = "storageos-agent"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "StorageOS Agent — standalone background service for storage operations"
 
@@ -34,6 +34,7 @@ sha2 = "0.10"
 tokio-tungstenite = { version = "0.24", features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 base64 = "0.22"
+flate2 = "1"
 tokio-stream = "0.1"
 bytes = "1"
 

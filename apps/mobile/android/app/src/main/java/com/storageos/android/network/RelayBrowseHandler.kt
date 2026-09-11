@@ -24,6 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "RelayBrowseHandler"
 private const val MAX_ENTRIES = 10_000
+// Compress listing payloads larger than this (bytes of JSON). A big folder's
+// listing is ~1MB and otherwise times out the relay request on a slow link.
+private const val COMPRESS_THRESHOLD = 4096
 
 data class UploadContext(
     val tempFile: File,
@@ -78,10 +81,11 @@ class RelayBrowseHandler(
                 put("is_ready", true)
             })
         }
+        val dataStr = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), roots)
         val payload = buildJsonObject {
             put("type", "roots_response")
             put("request_id", requestId)
-            put("data", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), roots))
+            if (dataStr.length > COMPRESS_THRESHOLD) { put("data", gzipB64(dataStr)); put("enc", "gzip") } else { put("data", dataStr) }
         }
         sendResponse(destination, requestId, payload)
     }
@@ -106,10 +110,11 @@ class RelayBrowseHandler(
             .take(MAX_ENTRIES) // bound huge folders (folders-first, alphabetical)
             .map { fileToEntryJson(it) }
 
+        val dataStr = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), entries)
         val payload = buildJsonObject {
             put("type", "directory_response")
             put("request_id", requestId)
-            put("data", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), entries))
+            if (dataStr.length > COMPRESS_THRESHOLD) { put("data", gzipB64(dataStr)); put("enc", "gzip") } else { put("data", dataStr) }
         }
         sendResponse(destination, requestId, payload)
     }
@@ -165,10 +170,11 @@ class RelayBrowseHandler(
                 .thenBy { it["name"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "" }
         )
 
+        val dataStr = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), sorted)
         val payload = buildJsonObject {
             put("type", "search_response")
             put("request_id", requestId)
-            put("data", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), sorted))
+            if (dataStr.length > COMPRESS_THRESHOLD) { put("data", gzipB64(dataStr)); put("enc", "gzip") } else { put("data", dataStr) }
         }
         sendResponse(destination, requestId, payload)
     }
@@ -401,6 +407,14 @@ class RelayBrowseHandler(
             if (!newFile.exists()) return newFile
             counter++
         }
+    }
+
+    /** gzip a string then base64 (NO_WRAP, standard alphabet) — the relay
+     *  receivers base64-decode then gunzip. Marker `enc:"gzip"` flags it. */
+    private fun gzipB64(s: String): String {
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.GZIPOutputStream(baos).use { it.write(s.toByteArray(Charsets.UTF_8)) }
+        return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
     private fun sendResponse(destination: String, requestId: String, payload: JsonObject) {

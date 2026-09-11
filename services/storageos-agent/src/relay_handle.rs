@@ -8,7 +8,7 @@ use storageos_core::protocol::payloads::Payload;
 use storageos_core::protocol::CURRENT_VERSION;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>>;
 
