@@ -121,9 +121,6 @@ async fn main() {
         tracing::info!("Relay disabled (no URL configured)");
     }
 
-    presence::spawn_presence_poller(registry.clone());
-    tracing::info!("Presence poller started (12s interval)");
-
     let (pair_event_tx, pair_event_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let (relay_state_rx, relay_handle) = relay::spawn_relay_client(relay::RelayContext {
@@ -133,6 +130,12 @@ async fn main() {
         config: cfg.relay.clone(),
         pair_event_tx: Some(pair_event_tx),
     });
+
+    // Poller needs the relay state so it can mark relay-only peers (e.g. a phone
+    // on mobile data) reachable while the relay is connected, instead of trying
+    // to HTTP-probe their non-routable placeholder address.
+    presence::spawn_presence_poller(registry.clone(), relay_state_rx.clone());
+    tracing::info!("Presence poller started (12s interval)");
 
     let tray_rx = tray::spawn(cfg.log_dir());
 

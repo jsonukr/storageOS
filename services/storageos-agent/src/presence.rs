@@ -1,8 +1,9 @@
 use crate::device_registry::DeviceRegistry;
 use storageos_core::models::device::DeviceId;
-use storageos_core::networking::{DeviceEndpoint, TransportKind};
+use storageos_core::networking::{DeviceEndpoint, RelayState, TransportKind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::watch::Receiver;
 use tokio::sync::Semaphore;
 
 /// Cap how many devices we probe at once. Without this, one poll cycle could
@@ -11,7 +12,7 @@ use tokio::sync::Semaphore;
 /// several devices were paired.
 const MAX_CONCURRENT_PROBES: usize = 4;
 
-pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
+pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>, relay_state: Receiver<RelayState>) {
     tokio::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
@@ -45,6 +46,7 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
                 let address = device.address.clone();
 
                 let endpoints = device.endpoints.clone();
+                let relay_connected = matches!(*relay_state.borrow(), RelayState::Connected);
 
                 tokio::spawn(async move {
                     let _permit = permit;
@@ -56,16 +58,21 @@ pub fn spawn_presence_poller(registry: Arc<DeviceRegistry>) {
                     let mut any_online = false;
 
                     for ep in &endpoints {
-                        let endpoint = DeviceEndpoint::from_address(
-                            DeviceId::new(&device_id),
-                            TransportKind::Lan,
-                            &format!("{}:{}", ep.host, ep.port),
-                        );
-                        let url = endpoint.url("/presence");
-
-                        let reachable = match client.get(&url).send().await {
-                            Ok(resp) if resp.status().is_success() => true,
-                            _ => false,
+                        // The relay endpoint has no HTTP address to probe (host is a
+                        // placeholder). A peer is reachable over the relay whenever
+                        // THIS agent is connected to it; the desktop's per-request
+                        // success/failure tracking refines it from there. Only LAN-
+                        // style endpoints get a direct /presence probe.
+                        let reachable = if ep.transport == "relay" {
+                            relay_connected
+                        } else {
+                            let endpoint = DeviceEndpoint::from_address(
+                                DeviceId::new(&device_id),
+                                TransportKind::Lan,
+                                &format!("{}:{}", ep.host, ep.port),
+                            );
+                            let url = endpoint.url("/presence");
+                            matches!(client.get(&url).send().await, Ok(resp) if resp.status().is_success())
                         };
 
                         let _ = registry.update_endpoint_reachability(
