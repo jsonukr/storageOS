@@ -954,11 +954,13 @@ function FileThumbnail({ entry, size = 32 }: { entry: DirectoryEntry; size?: num
     if (!el) return;
     if (entry.is_directory) return;
     const category = getFileCategory(entry.extension);
-    const wantImage = category === "image" && size >= 32;
-    // Skip video frames over relay — there's no streaming endpoint, so it would
-    // pull the whole file just for a thumbnail.
+    // Skip auto-thumbnails over the relay: there's no cheap thumbnail path, so a
+    // preview pulls the WHOLE file. Across a photo-heavy folder that floods the
+    // peer's memory (a phone would OOM / white-screen). Open a file to view it
+    // full-size instead. (Same reason video frames are skipped over relay.)
     const isRelay = remoteDevice != null &&
       ConnectionManager.getActiveTransport(remoteDevice.deviceId) === "relay";
+    const wantImage = category === "image" && size >= 32 && !isRelay;
     const wantVideo = category === "video" && size >= 48 && !isRelay;
     if (!wantImage && !wantVideo) return;
 

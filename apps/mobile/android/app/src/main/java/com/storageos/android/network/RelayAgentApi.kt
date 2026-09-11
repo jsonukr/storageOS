@@ -183,7 +183,7 @@ class RelayAgentApi(
     /** Extract the `data` string from a response, inflating it if the sender
      *  marked it `enc:"gzip"` (large listings are gzip+base64 compressed). */
     private fun decodeData(p: JsonObject): String? {
-        val dataStr = decodeData(p) ?: return null
+        val dataStr = p["data"]?.jsonPrimitive?.contentOrNull ?: return null
         return if (p["enc"]?.jsonPrimitive?.contentOrNull == "gzip") gunzipB64(dataStr) else dataStr
     }
 
