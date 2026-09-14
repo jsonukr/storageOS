@@ -27,6 +27,8 @@ pub struct RelayContext {
     pub fingerprint: String,
     pub config: RelayAgentConfig,
     pub pair_event_tx: Option<mpsc::UnboundedSender<PairRelayEvent>>,
+    /// Used to authorize relay file requests — only paired+approved devices are served.
+    pub registry: std::sync::Arc<crate::device_registry::DeviceRegistry>,
 }
 
 pub fn spawn_relay_client(
@@ -200,7 +202,7 @@ async fn run_session(
                         }
                     }
                     Some(Ok(tungstenite::Message::Text(text))) => {
-                        handle_incoming_text(&text, &device_id, outbound_tx, pending, pair_event_tx).await;
+                        handle_incoming_text(&text, &device_id, outbound_tx, pending, pair_event_tx, &ctx.registry).await;
                     }
                     Some(Ok(tungstenite::Message::Binary(data))) => {
                         tracing::debug!(len = data.len(), "Relay binary message received");
@@ -234,6 +236,7 @@ async fn handle_incoming_text(
     outbound_tx: &mpsc::UnboundedSender<String>,
     pending: &crate::relay_handle::PendingMap,
     pair_event_tx: &Option<mpsc::UnboundedSender<PairRelayEvent>>,
+    registry: &std::sync::Arc<crate::device_registry::DeviceRegistry>,
 ) {
     if let Some(tx) = pair_event_tx {
         if let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) {
@@ -274,6 +277,39 @@ async fn handle_incoming_text(
                     return;
                 }
             }
+        }
+
+        // Authorization gate: only a paired + APPROVED (trusted) device may have
+        // its file requests served. Pair handshakes and response/error frames
+        // already returned above, so anything still here is a file request —
+        // reject it (with an error the client can surface) unless approved.
+        let source = raw.get("source").and_then(|s| s.as_str()).unwrap_or("");
+        if !registry.is_trusted(source) {
+            tracing::warn!(source = %source, "Relay request from unapproved device rejected");
+            let req_id = raw
+                .get("id")
+                .and_then(|v| v.as_str())
+                .or_else(|| raw.get("payload").and_then(|p| p.get("request_id")).and_then(|v| v.as_str()))
+                .or_else(|| raw.get("request_id").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let err = serde_json::json!({
+                "version": { "major": 1, "minor": 0 },
+                "id": uuid::Uuid::new_v4().to_string(),
+                "request_id": req_id,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                "source": device_id,
+                "destination": source,
+                "kind": "error",
+                "payload": { "type": "error_response", "request_id": req_id, "error": "Device not authorized — pairing not approved" }
+            });
+            if let Ok(json) = serde_json::to_string(&err) {
+                let _ = outbound_tx.send(json);
+            }
+            return;
         }
 
         // File uploads arriving over the relay are a stateful, multi-message flow

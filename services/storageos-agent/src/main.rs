@@ -129,6 +129,7 @@ async fn main() {
         fingerprint: device_keys.fingerprint.clone(),
         config: cfg.relay.clone(),
         pair_event_tx: Some(pair_event_tx),
+        registry: registry.clone(),
     });
 
     // Poller needs the relay state so it can mark relay-only peers (e.g. a phone
@@ -180,7 +181,11 @@ async fn main() {
     tracing::info!(addr = %addr, "HTTP and WebSocket server started");
     tracing::info!("StorageOS Agent ready");
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(tray_rx));
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(tray_rx));
 
     if let Err(e) = server.await {
         tracing::error!(error = %e, "Server error");

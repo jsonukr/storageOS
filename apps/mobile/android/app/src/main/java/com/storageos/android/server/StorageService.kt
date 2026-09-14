@@ -22,9 +22,14 @@ class StorageService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        val deviceId = DeviceStore(this).getOrCreateDeviceId()
+        val store = DeviceStore(this)
+        val deviceId = store.getOrCreateDeviceId()
         try {
-            val s = StorageServer(deviceId, cacheDir = cacheDir)
+            val s = StorageServer(
+                deviceId,
+                cacheDir = cacheDir,
+                isAuthorized = { id -> store.findByDeviceId(id) != null },
+            )
             s.start()
             server = s
         } catch (_: Exception) {

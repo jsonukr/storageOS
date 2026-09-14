@@ -50,10 +50,22 @@ interface AgentApi {
     suspend fun listDevices(): List<DeviceRecord>
 
     companion object {
-        fun create(host: String, port: Int): AgentApi {
+        fun create(host: String, port: Int, deviceId: String = ""): AgentApi {
             val client = OkHttpClient.Builder()
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
+                // Identify ourselves so the peer's LAN authorization can check we
+                // are an approved device before serving files.
+                .addInterceptor { chain ->
+                    val req = if (deviceId.isNotBlank()) {
+                        chain.request().newBuilder()
+                            .header("X-StorageOS-Device", deviceId)
+                            .build()
+                    } else {
+                        chain.request()
+                    }
+                    chain.proceed(req)
+                }
                 .build()
 
             val json = Json { ignoreUnknownKeys = true }

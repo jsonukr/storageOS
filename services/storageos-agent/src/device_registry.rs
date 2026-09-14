@@ -389,6 +389,27 @@ impl DeviceRegistry {
         Ok(updated > 0)
     }
 
+    /// Authorization gate: has this device been paired AND approved (trusted)?
+    /// A cheap single-column lookup used on every relay file request. Empty or
+    /// unknown ids, and pending/revoked devices, are not trusted. Case-insensitive
+    /// so "trusted"/"Trusted" both pass.
+    pub fn is_trusted(&self, device_id: &str) -> bool {
+        if device_id.is_empty() {
+            return false;
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT trust_status FROM devices WHERE device_id = ?1",
+            params![device_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .map(|s| s.eq_ignore_ascii_case("trusted"))
+        .unwrap_or(false)
+    }
+
     pub fn get_device(&self, device_id: &str) -> Result<Option<DeviceRecord>, String> {
         let conn = self.conn.lock().unwrap();
         let device = conn

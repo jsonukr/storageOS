@@ -41,6 +41,7 @@ class DownloadManager(private val context: Context) {
     val jobs: StateFlow<List<TransferJob>> = _jobs.asStateFlow()
 
     private val notifications = TransferNotifications(context)
+    private val myDeviceId = com.storageos.android.data.DeviceStore(context).getOrCreateDeviceId()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -80,7 +81,8 @@ class DownloadManager(private val context: Context) {
                 updateJob(job.id) { it.copy(status = TransferStatus.Running) }
 
                 val encodedPath = URLEncoder.encode(entry.fullPath, "UTF-8")
-                val url = "$agentBaseUrl/download?path=$encodedPath"
+                // dev=<our id> lets the peer's LAN authorization approve us.
+                val url = "$agentBaseUrl/download?path=$encodedPath&dev=$myDeviceId"
 
                 val request = Request.Builder().url(url).build()
                 val response = client.newCall(request).execute()

@@ -1,0 +1,24 @@
+name: keep-relay-warm
+
+# Render's free tier spins the relay down after ~15 min idle, which makes the
+# first cross-network connect slow (cold start). Ping /version periodically so
+# it stays awake. GitHub's scheduler is best-effort (can be delayed); for a
+# hard guarantee use an external uptime monitor (e.g. UptimeRobot) every 5 min.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping relay /version
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://storageos.onrender.com/version || echo 000)
+            echo "attempt $i -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "relay did not return 200 (may still be waking)"

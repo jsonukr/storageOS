@@ -5,6 +5,8 @@ import com.storageos.android.BuildConfig
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import com.storageos.android.util.QuickAttrs
+import com.storageos.android.util.quickAttrsAll
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -19,6 +21,8 @@ class StorageServer(
     port: Int = DEFAULT_PORT,
     private val identityProvider: (() -> DeviceIdentityInfo)? = null,
     private val cacheDir: File? = null,
+    // Only an approved (paired) device may read/write this phone's files.
+    private val isAuthorized: (String) -> Boolean = { true },
 ) : NanoHTTPD("0.0.0.0", port) {
 
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
@@ -38,6 +42,22 @@ class StorageServer(
         val uri = session.uri
         @Suppress("DEPRECATION")
         val params = session.parms ?: emptyMap()
+
+        // Gate file endpoints: only an approved (paired) device may access them.
+        // Liveness/pairing endpoints stay open so pairing can complete.
+        val gatedUris = setOf("/roots", "/directory", "/download", "/mkdir", "/rename", "/entry", "/upload")
+        if (uri in gatedUris) {
+            // Identity via header (webview/OkHttp) OR `dev` query param (native
+            // downloader/uploader URLs that can't set headers).
+            val requester = session.headers?.get("x-storageos-device") ?: params["dev"] ?: ""
+            if (!isAuthorized(requester)) {
+                android.util.Log.w("StorageServer", "LAN $uri from unapproved device '$requester' rejected")
+                return newFixedLengthResponse(
+                    Response.Status.FORBIDDEN, MIME_JSON,
+                    errorJson("UNAUTHORIZED", "Device not approved"),
+                ).withCors()
+            }
+        }
 
         return try {
             when {
@@ -63,7 +83,7 @@ class StorageServer(
     private fun Response.withCors(): Response {
         addHeader("Access-Control-Allow-Origin", "*")
         addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        addHeader("Access-Control-Allow-Headers", "Content-Type, Range")
+        addHeader("Access-Control-Allow-Headers", "Content-Type, Range, X-StorageOS-Device")
         addHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Disposition")
         return this
     }
@@ -135,20 +155,26 @@ class StorageServer(
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_JSON, errorJson("INVALID_ARGUMENT", "Path is not a directory"))
         }
 
-        val entries = (dir.listFiles() ?: emptyArray())
-            .filter { !it.name.startsWith(".") }
-            .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
-            .map { file ->
+        // One stat per file (quickAttrs), then sort + serialize from the cached
+        // attributes — avoids the ~8 syscalls/file and the isDirectory calls the
+        // sort comparator would otherwise make, which made huge folders crawl.
+        val files = (dir.listFiles() ?: emptyArray()).filter { !it.name.startsWith(".") }
+        val entries = kotlinx.coroutines.runBlocking { files.quickAttrsAll() }
+            .sortedWith(
+                compareBy<Pair<File, QuickAttrs>> { !it.second.isDirectory }
+                    .thenBy { it.first.name.lowercase() }
+            )
+            .map { (file, a) ->
                 DirEntry(
                     name = file.name,
                     fullPath = file.absolutePath,
-                    isDirectory = file.isDirectory,
-                    size = if (file.isFile) file.length() else 0,
-                    lastModified = file.lastModified() / 1000,
-                    dateCreated = file.lastModified() / 1000,
-                    hidden = file.isHidden,
-                    readonly = !file.canWrite(),
-                    extension = if (file.isFile) file.extension else "",
+                    isDirectory = a.isDirectory,
+                    size = a.size,
+                    lastModified = a.lastModified,
+                    dateCreated = a.created,
+                    hidden = false,
+                    readonly = false,
+                    extension = if (a.isDirectory) "" else file.name.substringAfterLast('.', ""),
                 )
             }
 

@@ -1,6 +1,9 @@
 package com.storageos.android.network
 
 import com.storageos.android.BuildConfig
+import com.storageos.android.util.QuickAttrs
+import com.storageos.android.util.quickAttrs
+import com.storageos.android.util.quickAttrsAll
 
 import android.os.Environment
 import android.os.StatFs
@@ -38,6 +41,9 @@ data class UploadContext(
 class RelayBrowseHandler(
     private val relay: RelayClient,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+    // Authorization gate: only a device this phone has paired/approved may have
+    // its file requests served. Unknown device ids are rejected.
+    private val isAuthorized: (String) -> Boolean = { true },
 ) {
     private val activeUploads = ConcurrentHashMap<String, UploadContext>()
 
@@ -47,6 +53,13 @@ class RelayBrowseHandler(
         val originalRequestId = msg.id
 
         Log.d(TAG, "handleMessage type=$payloadType from=$source requestId=$originalRequestId")
+
+        // Reject file requests from a device that hasn't been paired/approved.
+        if (!isAuthorized(source)) {
+            Log.w(TAG, "Rejecting $payloadType from unapproved device $source")
+            sendErrorResponse(source, originalRequestId, "Device not authorized — pairing not approved")
+            return
+        }
 
         when (payloadType) {
             "roots_request" -> handleRootsRequest(source, originalRequestId)
@@ -104,11 +117,17 @@ class RelayBrowseHandler(
             return
         }
 
-        val entries = (dir.listFiles() ?: emptyArray())
-            .filter { !it.name.startsWith(".") }
-            .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
+        // One stat per file (quickAttrs) then sort/serialize from the cache —
+        // avoids ~8 syscalls/file plus the sort comparator's isDirectory calls,
+        // which made a photo folder take tens of seconds to list.
+        val files = (dir.listFiles() ?: emptyArray()).filter { !it.name.startsWith(".") }
+        val entries = kotlinx.coroutines.runBlocking { files.quickAttrsAll() }
+            .sortedWith(
+                compareBy<Pair<File, QuickAttrs>> { !it.second.isDirectory }
+                    .thenBy { it.first.name.lowercase() }
+            )
             .take(MAX_ENTRIES) // bound huge folders (folders-first, alphabetical)
-            .map { fileToEntryJson(it) }
+            .map { (file, a) -> fileToEntryJson(file, a) }
 
         val dataStr = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(JsonObject.serializer()), entries)
         val payload = buildJsonObject {
@@ -119,16 +138,18 @@ class RelayBrowseHandler(
         sendResponse(destination, requestId, payload)
     }
 
-    private fun fileToEntryJson(file: File): JsonObject = buildJsonObject {
+    private fun fileToEntryJson(file: File): JsonObject = fileToEntryJson(file, file.quickAttrs())
+
+    private fun fileToEntryJson(file: File, a: QuickAttrs): JsonObject = buildJsonObject {
         put("name", file.name)
         put("full_path", file.absolutePath)
-        put("is_directory", file.isDirectory)
-        put("size", if (file.isFile) file.length() else 0L)
-        put("last_modified", file.lastModified() / 1000)
-        put("date_created", file.lastModified() / 1000)
-        put("hidden", file.isHidden)
-        put("readonly", !file.canWrite())
-        put("extension", if (file.isFile) file.extension else "")
+        put("is_directory", a.isDirectory)
+        put("size", a.size)
+        put("last_modified", a.lastModified)
+        put("date_created", a.created)
+        put("hidden", false)
+        put("readonly", false)
+        put("extension", if (a.isDirectory) "" else file.name.substringAfterLast('.', ""))
     }
 
     private fun handleSearchRequest(destination: String, requestId: String, reqPayload: JsonObject) {

@@ -44,6 +44,7 @@ class PairViewModel : ViewModel() {
 
     private var identity: DeviceIdentity? = null
     private var relay: RelayClient? = null
+    private var deviceStore: com.storageos.android.data.DeviceStore? = null
     private var countdownJob: Job? = null
     private var pollJob: Job? = null
     private var relayUrl: String? = null
@@ -53,13 +54,14 @@ class PairViewModel : ViewModel() {
         val id = DeviceIdentity(context)
         identity = id
 
-        val deviceStore = com.storageos.android.data.DeviceStore(context)
-        relayUrl = deviceStore.getRelayUrl() ?: DEFAULT_RELAY_URL
+        val store = com.storageos.android.data.DeviceStore(context)
+        deviceStore = store
+        relayUrl = store.getRelayUrl() ?: DEFAULT_RELAY_URL
 
         val url = relayUrl
         if (url != null) {
             relay = RelayClient(id, url).also {
-                it.enableBrowseHandler()
+                it.enableBrowseHandler { peerId -> store.findByDeviceId(peerId) != null }
                 it.connect()
             }
         }
@@ -85,6 +87,21 @@ class PairViewModel : ViewModel() {
 
     fun approve(onPaired: () -> Unit) {
         val current = _state.value
+        // Persist + authorize the just-approved peer so it may browse this device
+        // (the RelayBrowseHandler gate only serves devices saved here).
+        if (current.peerDeviceId.isNotBlank()) {
+            deviceStore?.save(
+                com.storageos.android.data.SavedDevice(
+                    deviceId = current.peerDeviceId,
+                    host = "",
+                    port = 0,
+                    name = current.friendlyName.ifBlank { current.peerName },
+                    systemName = current.peerName,
+                    deviceType = current.peerKind,
+                    platform = current.peerPlatform,
+                )
+            )
+        }
         _state.value = current.copy(
             view = PairView.DONE,
             peerName = current.friendlyName.ifBlank { current.peerName },

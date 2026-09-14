@@ -26,6 +26,7 @@ class UploadManager(private val context: Context) {
     val jobs: StateFlow<List<TransferJob>> = _jobs.asStateFlow()
 
     private val notifications = TransferNotifications(context)
+    private val myDeviceId = com.storageos.android.data.DeviceStore(context).getOrCreateDeviceId()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -129,7 +130,7 @@ class UploadManager(private val context: Context) {
 
                 val encodedPath = URLEncoder.encode(destinationPath, "UTF-8")
                 val request = Request.Builder()
-                    .url("$agentBaseUrl/upload?path=$encodedPath")
+                    .url("$agentBaseUrl/upload?path=$encodedPath&dev=$myDeviceId")
                     .post(multipartBody)
                     .build()
 

@@ -4,6 +4,29 @@ import type { TransportKind } from "./types";
 const DEBUG = import.meta.env.DEV;
 const LOCAL_AGENT = "http://127.0.0.1:19742";
 
+// This PC's own device id, sent as X-StorageOS-Device on direct LAN requests so
+// the peer can verify we're an approved device before serving files. Cached
+// after the first lookup from the local agent's /health.
+let localDeviceId: string | null = null;
+async function getLocalDeviceId(): Promise<string> {
+  if (localDeviceId !== null) return localDeviceId;
+  try {
+    const r = await fetch(`${LOCAL_AGENT}/health`);
+    localDeviceId = r.ok ? ((await r.json()).device_id ?? "") : "";
+  } catch {
+    localDeviceId = "";
+  }
+  return localDeviceId ?? "";
+}
+
+async function withDeviceHeader(init: RequestInit): Promise<RequestInit> {
+  const did = await getLocalDeviceId();
+  if (!did) return init;
+  const headers = new Headers(init.headers ?? {});
+  headers.set("X-StorageOS-Device", did);
+  return { ...init, headers };
+}
+
 function debugLog(msg: string, data?: Record<string, unknown>): void {
   if (!DEBUG) return;
   const parts = [`[transport] ${msg}`];
@@ -42,7 +65,7 @@ export async function remoteFetch(opts: RemoteFetchOptions): Promise<Response> {
   });
 
   try {
-    const response = await fetch(url, fetchInit);
+    const response = await fetch(url, await withDeviceHeader(fetchInit));
     const latency = performance.now() - start;
 
     if (response.ok) {
@@ -121,7 +144,7 @@ async function retryOnFailover(
   const start = performance.now();
 
   try {
-    const response = await fetch(url, fetchInit);
+    const response = await fetch(url, await withDeviceHeader(fetchInit));
     const latency = performance.now() - start;
 
     if (response.ok && newTransport) {
@@ -198,8 +221,17 @@ export function buildRemoteUrl(deviceId: string, path: string): string | null {
 
   const address = ConnectionManager.getAddress(deviceId);
   if (!address) return null;
-  return `http://${address}${path.startsWith("/") ? path : `/${path}`}`;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  // Native downloader/uploader URLs (Tauri, <video src>) can't set a header, so
+  // carry our device id as a query param for the peer's LAN authorization.
+  const did = localDeviceId ?? "";
+  if (!did) return `http://${address}${p}`;
+  const sep = p.includes("?") ? "&" : "?";
+  return `http://${address}${p}${sep}dev=${encodeURIComponent(did)}`;
 }
+
+// Warm the cached device id at startup so buildRemoteUrl has it synchronously.
+void getLocalDeviceId();
 
 export function recordTransferResult(
   deviceId: string,

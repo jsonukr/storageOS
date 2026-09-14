@@ -184,7 +184,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         val identity = DeviceIdentity(context)
         val relay = RelayClient(identity, DEFAULT_RELAY_URL)
         activeRelay = relay
-        relay.enableBrowseHandler()
+        relay.enableBrowseHandler { id -> deviceStore.findByDeviceId(id) != null }
         relay.connect()
 
         // Wait for relay connection (up to 90s for Render cold start)
@@ -207,26 +207,26 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         Log.i(TAG, "Relay connected, creating RelayAgentApi for $targetDeviceId")
         val relayApi = RelayAgentApi(relay, targetDeviceId)
 
-        // The target agent may still be (re)connecting to the relay itself
-        // (e.g. Render cold start). Probe until it actually answers instead of
-        // dropping the user into the browser only for the first load to time out.
-        val reachable = probeRelayTarget(relayApi)
-        if (!reachable) {
+        // Announce ourselves FIRST so the target shows its approval prompt and
+        // (on approval) registers this device. The target only serves files to an
+        // approved device, so we must trigger approval before probing for access.
+        if (!pairCode.isNullOrBlank()) {
+            sendRelayPairInitiate(relay, identity, targetDeviceId, pairCode)
+        }
+
+        // Poll until the target actually serves us — i.e. the user has approved
+        // this device on the other end (a pre-approval request is rejected). This
+        // also covers the target still (re)connecting to the relay (Render cold
+        // start) and reconnecting an already-approved device (succeeds at once).
+        val authorized = probeRelayTarget(relayApi)
+        if (!authorized) {
             relay.disconnect()
             activeRelay = null
             _state.value = _state.value.copy(
                 isConnecting = false,
-                error = "Device isn't responding via relay. Make sure the desktop app is running, then try again.",
+                error = "Not approved yet. Approve this device on the other device's screen, then try again.",
             )
             return
-        }
-
-        // Announce ourselves to the target so it shows an approval prompt and
-        // registers this device (parity with the LAN /pair/initiate flow). Done
-        // after the probe so we know our HELLO was processed and the target is
-        // online to receive it.
-        if (!pairCode.isNullOrBlank()) {
-            sendRelayPairInitiate(relay, identity, targetDeviceId, pairCode)
         }
 
         deviceStore.save(SavedDevice(
@@ -267,11 +267,31 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         Log.i(TAG, "Sent pair_initiate via relay to $targetDeviceId")
     }
 
+    private suspend fun probeLanAuthorized(client: AgentApi): Boolean {
+        // roots() succeeds only once the other device has approved this one
+        // (it returns 403 before approval), so this doubles as "wait for
+        // approval" — give the user time to tap Approve.
+        val deadlineMs = System.currentTimeMillis() + 90_000
+        while (System.currentTimeMillis() < deadlineMs) {
+            val ok = try {
+                withContext(Dispatchers.IO) { client.roots() }
+                true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false // 403 (not approved yet) or transient — keep waiting
+            }
+            if (ok) return true
+            withContext(Dispatchers.IO) { Thread.sleep(1500) }
+        }
+        return false
+    }
+
     private suspend fun probeRelayTarget(relayApi: RelayAgentApi): Boolean {
-        // Keep this short: a long probe makes the phone look "stuck" when the
-        // target is offline. A few quick attempts cover a warm reconnect; past
-        // that we surface a clear error instead of hanging.
-        val deadlineMs = System.currentTimeMillis() + 20_000
+        // Poll roots() until it succeeds. It only succeeds once the other device
+        // has APPROVED this one (before that the request is rejected), so this
+        // doubles as "wait for approval" — give the user time to tap Approve.
+        val deadlineMs = System.currentTimeMillis() + 90_000
         var attempt = 0
         while (System.currentTimeMillis() < deadlineMs) {
             attempt++
@@ -336,7 +356,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             if (host.isNotBlank()) {
                 Log.i(TAG, "Trying LAN hint: $host:$port")
                 try {
-                    val client = AgentApi.create(host, port)
+                    val client = AgentApi.create(host, port, myDeviceId)
                     val health = client.health()
                     Log.i(TAG, "LAN health: ${health.status}")
                     if (health.status == "ok") {
@@ -364,6 +384,19 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                                     pairingToken = v2.code,
                                 ))
                             } catch (_: Exception) { }
+                        }
+
+                        // Wait for the user to APPROVE this device on the other
+                        // end. The PC serves files only after approval (roots()
+                        // is refused until then), so poll instead of dropping
+                        // into an error/empty browser.
+                        val approved = probeLanAuthorized(client)
+                        if (!approved) {
+                            _state.value = _state.value.copy(
+                                isConnecting = false,
+                                error = "Not approved yet. Approve this device on the other device's screen, then reconnect.",
+                            )
+                            return@launch
                         }
 
                         api = client
@@ -453,7 +486,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 if (hintHost.isNotBlank()) {
                     try {
                         val client = withContext(Dispatchers.IO) {
-                            val c = AgentApi.create(hintHost, hintPort)
+                            val c = AgentApi.create(hintHost, hintPort, myDeviceId)
                             c.health()
                             c
                         }
@@ -513,7 +546,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             _state.value = _state.value.copy(isConnecting = true, error = null)
             try {
                 val client = withContext(Dispatchers.IO) {
-                    val c = AgentApi.create(device.host, device.port)
+                    val c = AgentApi.create(device.host, device.port, myDeviceId)
                     c.health()
                     c
                 }
@@ -566,7 +599,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             try {
-                val client = AgentApi.create(host, port)
+                val client = AgentApi.create(host, port, myDeviceId)
                 val health = client.health()
 
                 if (health.status != "ok") {

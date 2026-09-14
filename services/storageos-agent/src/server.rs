@@ -1,11 +1,13 @@
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::http::{header, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::extract::Multipart;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -67,15 +69,28 @@ pub fn router(state: Arc<AppState>) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
-        .route("/health", get(health))
-        .route("/version", get(version))
+    // File endpoints a remote device hits directly over LAN. Localhost (the
+    // desktop app on this machine) is always allowed; a remote caller must send
+    // an approved device id in X-StorageOS-Device — enforced by authorize_lan.
+    let gated = Router::new()
         .route("/roots", get(roots))
         .route("/directory", get(directory))
         .route("/search", get(search))
         .route("/file", get(file_metadata))
         .route("/download", get(download))
         .route("/thumbnail", get(thumbnail))
+        .route("/mkdir", post(mkdir))
+        .route("/rename", post(rename))
+        .route("/entry", delete(delete_entry))
+        .route("/upload", post(upload))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), authorize_lan));
+
+    // Open endpoints: liveness, pairing (needed pre-approval), device management,
+    // websocket, and the /relay/* proxy (called by THIS machine's own desktop UI
+    // over localhost; the peer enforces its own gate on the far side).
+    let open = Router::new()
+        .route("/health", get(health))
+        .route("/version", get(version))
         .route("/pair", get(pair_info))
         .route("/pair/qr", get(pair_qr))
         .route("/pair/session", get(get_pair_session).post(create_pair_session).delete(cancel_pair_session))
@@ -89,10 +104,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/devices/pair", post(pair_device))
         .route("/devices/:id", get(get_device).patch(rename_device).delete(forget_device))
         .route("/devices/:id/forget", post(remote_forget))
-        .route("/mkdir", post(mkdir))
-        .route("/rename", post(rename))
-        .route("/entry", delete(delete_entry))
-        .route("/upload", post(upload))
         .route("/ws", get(ws_upgrade))
         .route("/relay/roots", get(crate::relay_proxy::relay_roots))
         .route("/relay/directory", get(crate::relay_proxy::relay_directory))
@@ -102,9 +113,54 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/relay/search", get(crate::relay_proxy::relay_search))
         .route("/relay/thumbnail", get(crate::relay_proxy::relay_thumbnail))
         .route("/relay/download", get(crate::relay_proxy::relay_download))
-        .route("/relay/upload", post(crate::relay_proxy::relay_upload))
+        .route("/relay/upload", post(crate::relay_proxy::relay_upload));
+
+    Router::new()
+        .merge(gated)
+        .merge(open)
         .layer(cors)
         .with_state(state)
+}
+
+/// LAN authorization: the local user (loopback) is always allowed; a remote
+/// caller must present an approved device id (X-StorageOS-Device header) that is
+/// paired + trusted, otherwise the file request is refused.
+async fn authorize_lan(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if addr.ip().is_loopback() {
+        return next.run(req).await;
+    }
+    // Identity may arrive as the X-StorageOS-Device header (webview/OkHttp
+    // requests) OR as a `dev` query param (native downloader/uploader URLs that
+    // can't set headers). Accept either.
+    let from_header = req
+        .headers()
+        .get("x-storageos-device")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let from_query = req
+        .uri()
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("dev=")))
+        .map(|s| s.to_string());
+    let device = from_header.or(from_query).unwrap_or_default();
+    if state.registry.is_trusted(&device) {
+        next.run(req).await
+    } else {
+        tracing::warn!(device = %device, remote = %addr, "LAN file request from unapproved device rejected");
+        (
+            StatusCode::FORBIDDEN,
+            Json(crate::dto::ErrorDto {
+                code: "UNAUTHORIZED".to_string(),
+                message: "Device not approved — approve this device on the other end first.".to_string(),
+            }),
+        )
+            .into_response()
+    }
 }
 
 fn now_epoch() -> i64 {

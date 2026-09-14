@@ -110,8 +110,8 @@ class RelayClient(
     private val _messages = MutableSharedFlow<RelayMessage>(extraBufferCapacity = 16)
     val messages: SharedFlow<RelayMessage> = _messages.asSharedFlow()
 
-    fun enableBrowseHandler() {
-        browseHandler = RelayBrowseHandler(this, json)
+    fun enableBrowseHandler(isAuthorized: (String) -> Boolean) {
+        browseHandler = RelayBrowseHandler(this, json, isAuthorized)
     }
 
     fun addResponseHandler(handler: (RelayMessage) -> Unit) {
